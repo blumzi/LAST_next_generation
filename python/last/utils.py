@@ -5,6 +5,8 @@ import os
 import datetime
 import io
 
+from json import JSONEncoder, JSONDecoder
+
 default_log_level = logging.DEBUG
 
 
@@ -25,8 +27,7 @@ class PathMaker:
     top_folder: str
 
     def __init__(self):
-        #self.top_folder = config.get('global', 'TopFolder')
-        self.top_folder = os.path.join('var', 'log')
+        self.top_folder = os.path.join('/var', 'log', 'last')
         pass
 
     @staticmethod
@@ -66,8 +67,7 @@ class PathMaker:
     #     return os.path.join(guiding_folder, f'guiding-{PathMaker.make_seq(guiding_folder)}')
 
     def make_logfile_name(self):
-        daily_folder = os.path.join(self.make_daily_log_folder_name())
-        os.makedirs(daily_folder)
+        daily_folder = self.make_daily_log_folder_name()
         return os.path.join(daily_folder, 'log.txt')
 
 
@@ -93,7 +93,7 @@ class DailyFileHandler(logging.FileHandler):
         """
         top = ''
         if platform.platform() == 'Linux':
-            top = '/var/log/last'
+            top = os.path.join('var', 'log', 'last')
         elif platform.platform().startswith('Windows'):
             top = os.path.join(os.path.expandvars('%LOCALAPPDATA%'), 'mast')
         now = datetime.datetime.now()
@@ -138,13 +138,29 @@ def init_log(logger: logging.Logger):
     logger.setLevel(default_log_level)
     handler = logging.StreamHandler()
     handler.setLevel(default_log_level)
-    formatter = logging.Formatter('%(asctime)s - %(levelname)-8s - {%(name)s:%(funcName)s:%(threadName)s:%(thread)s}' +
+    formatter = logging.Formatter('%(asctime)s - %(levelname)-8s - {%(name)s:%(funcName)s:%(process)d:%(threadName)s:%(thread)s}' +
                                   ' -  %(message)s')
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
-    # path_maker = SingletonFactory.get_instance(PathMaker)
-    handler = DailyFileHandler(path=os.path.join(path_maker.make_daily_log_folder_name(), 'log.txt'), mode='a')
+    handler = DailyFileHandler(path=path_maker.make_logfile_name(), mode='a')
     handler.setLevel(default_log_level)
     handler.setFormatter(formatter)
     logger.addHandler(handler)
+
+class DateTimeEncoder(JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, datetime.datetime):
+            return obj.isoformat()
+        # Let the base class default method raise the TypeError
+        return JSONEncoder.default(self, obj)
+
+def datetime_decoder(dct):
+    for key, value in dct.items():
+        if isinstance(value, str):
+            try:
+                dct[key] = datetime.datetime.fromisoformat(value)
+            except ValueError:
+                pass  # Not a datetime string, so we leave it unchanged
+    return dct
+    
