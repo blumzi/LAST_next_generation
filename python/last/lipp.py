@@ -15,16 +15,7 @@ class LIPPRequest:
     Method: str
     Parameters: OrderedDict
     RequestTime: datetime.datetime
-
-
-class LIPPTiming:
-    Sent: datetime.datetime
-    Received: datetime.datetime
-
-
-class Timing:
-    Request: LIPPTiming
-    Response: LIPPTiming
+    RequestReceived: datetime.datetime
 
 
 class LIPPResponse:
@@ -32,57 +23,61 @@ class LIPPResponse:
     Response: str
     Error: str = None
     ErrorReport: str = None
-    Timing: Timing
+    Timing: {}
+
 
 class LIPPReady:
     Status: str
+
 
 class Lipper:
     """
     An object that communicates between a LAST Unit and a device-driver for a specific type of LAST equipment
     using the LIPP (LAST Inter Process Protocol) protocol
     """
-    socket_to_driver: socket.socket
-    socket_path: str
+    socket: socket.socket
+    local_socket_path: str
+    peer_socket_path: str
     current_request_id: int
     _max_bytes = 64 * 1024
     driver_process = None
-    pending_request: None
+    pending_request: None | LIPPRequest
 
     def __init__(self, equipment: Equipment, equipment_id: int | None):
-        logger_name = f'lipp-{equipment.name}'
+        logger_name = f'lipp-unit-{equipment.name}'
         if equipment_id is not None:
             logger_name += f'-{equipment_id}'
-        logger_name += '-unit'
         self.logger = logging.getLogger(logger_name)
         init_log(self.logger)
 
         hostname = socket.gethostname()
         if not hostname.startswith('last'):
-            hostname = 'last07e'
+            hostname = 'last07w'
         if hostname.endswith('e'):
             valid_ids = equipment_ids['e']
         elif hostname.endswith('w'):
             valid_ids = equipment_ids['w']
         else:
-            raise f"Invalid hostname '{hostname}'"
+            raise Exception("Invalid hostname '{hostname}'")
 
         if equipment_id not in valid_ids:
-            raise f"Invalid equipment_id, should be one of {str.join(valid_ids, ', ')}"
+            raise Exception(f"Invalid equipment_id '{equipment_id}', should be one of {valid_ids.__str__()}")
 
-        self.socket_path = f'\0lipp-{equipment.name}'
+        self.local_socket_path = f'\0lipp-unit-{equipment.name}'
+        self.peer_socket_path = f'\0lipp-unit-{equipment.name}'
         if equipment_id is not None:
-            self.socket_path += f'-{equipment_id}'
+            self.local_socket_path += f'-{equipment_id}'
+        self.peer_socket_path = self.local_socket_path.replace('unit', 'driver')
 
-        self.socket_to_driver = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-        self.socket_to_driver.bind(self.socket_path)
+        self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self.socket.bind(self.local_socket_path)
         self.current_request_id = -1
 
-        self.driver_process = Popen(args=f'python3.12 -m lipp-simulator --socket {self.socket_path[1:]}',
+        self.driver_process = Popen(args=f'python3.12 -m lipp-simulator --unit-socket {self.local_socket_path[1:]}',
                                     cwd=os.path.curdir,
                                     shell=True)
 
-    def call(self, method: str, **kwargs):
+    def call(self, method: str, **kwargs) -> object:
         request = LIPPRequest()
         self.current_request_id += 1
         request.RequestId = self.current_request_id
@@ -92,25 +87,21 @@ class Lipper:
             request.Parameters[k] = v
         request.RequestTime = datetime.datetime.now()
         data = json.dumps(request.__dict__, cls=DateTimeEncoder).encode()
-        # self.logger.info(f"sending '{data}' on '{self.socket_path[1:]}'")
         self.pending_request = request
-        self.socket_to_driver.sendto(data, self.socket_path)
+        self.socket.sendto(data, self.peer_socket_path)
 
-        response = self.receive()
-        self.logger.info(f"request: '{request.__dict__}' ==> response: {response}")
-
-
+        return self.receive()
 
     def receive(self) -> object:
-        data, address = self.socket_to_driver.recvfrom(self._max_bytes)
-        # self.logger.info(f"received: '{data}'")
+        data, address = self.socket.recvfrom(self._max_bytes)
+        # self.logger.info(f"received: '{data}' from '{address}")
         response = json.loads(data.decode(), object_hook=datetime_decoder)
 
         if 'RequestId' in response and response['RequestId'] is not None:
             if response['RequestId'] != self.current_request_id:
                 raise Exception(f"expected RequestId '{self.current_request_id}' got '{response['RequestId']}'")
         else:
-                raise Exception("Missing 'RequstId' in response")
+            raise Exception("Missing 'RequestId' in response")
 
         msg = None
         if 'Error' in response and response['Error'] is not None:
@@ -125,8 +116,10 @@ class Lipper:
         if 'Timing' in response and response['Timing'] is not None:
             request_duration = response['Timing']['Request']['Received'] - response['Timing']['Request']['Sent']
             response['Timing']['Response']['Received'] = datetime.datetime.now()
-            response_duration: datetime.timedelta = response['Timing']['Response']['Received'] - response['Timing']['Response']['Sent']
-            msg += f"request_duration: {request_duration}, response_duration: {response_duration}"
+            response_duration: datetime.timedelta = (response['Timing']['Response']['Received'] -
+                                                     response['Timing']['Response']['Sent'])
+            elapsed = response['Timing']['Response']['Received'] - response['Timing']['Request']['Sent']
+            msg += f", Timing: elapsed: {elapsed}, request: {request_duration}, response: {response_duration}"
         
         if msg:
             self.logger.info(msg)
@@ -135,18 +128,21 @@ class Lipper:
 
     def __del__(self):
         self.driver_process.kill()
-        self.socket_to_driver.close()
+        self.socket.close()
+
 
 class ReadyMode(Enum):
     Ready = 1
     Routed = 2
     NotAvailable = 3
 
+
 class ReadyResponse:
     mode: ReadyMode
     message: str
 
-def parse_ready_packet(packet: dict) -> bool:
+
+def parse_ready_packet(packet: dict) -> ReadyResponse:
     ret = ReadyResponse()
     ret.message = None
 
@@ -168,6 +164,7 @@ def parse_ready_packet(packet: dict) -> bool:
         raise Exception(f"ready packet missing 'Status' key in 'Response'")
     
     return ret
+
 
 if __name__ == '__main__':
     lipper = Lipper(equipment=Equipment.Test, equipment_id=3)

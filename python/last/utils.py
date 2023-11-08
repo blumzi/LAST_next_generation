@@ -9,7 +9,6 @@ from json import JSONEncoder, JSONDecoder
 
 default_log_level = logging.DEBUG
 
-
 class Equipment(Enum):
     Mount = 1,
     Camera = 2,
