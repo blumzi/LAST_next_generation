@@ -8,6 +8,7 @@ import logging
 from subprocess import Popen
 import os
 from enum import Enum
+import humanize
 
 
 class LIPPRequest:
@@ -43,7 +44,7 @@ class Lipper:
     driver_process = None
     pending_request: None | LIPPRequest
 
-    def __init__(self, equipment: Equipment, equipment_id: int | None):
+    def __init__(self, equipment: Equipment, equipment_id: int | None = None):
         logger_name = f'lipp-unit-{equipment.name}'
         if equipment_id is not None:
             logger_name += f'-{equipment_id}'
@@ -64,7 +65,6 @@ class Lipper:
             raise Exception(f"Invalid equipment_id '{equipment_id}', should be one of {valid_ids.__str__()}")
 
         self.local_socket_path = f'\0lipp-unit-{equipment.name}'
-        self.peer_socket_path = f'\0lipp-unit-{equipment.name}'
         if equipment_id is not None:
             self.local_socket_path += f'-{equipment_id}'
         self.peer_socket_path = self.local_socket_path.replace('unit', 'driver')
@@ -90,9 +90,9 @@ class Lipper:
         self.pending_request = request
         self.socket.sendto(data, self.peer_socket_path)
 
-        return self.receive()
+        return self._receive()
 
-    def receive(self) -> object:
+    def _receive(self) -> dict:
         data, address = self.socket.recvfrom(self._max_bytes)
         # self.logger.info(f"received: '{data}' from '{address}")
         response = json.loads(data.decode(), object_hook=datetime_decoder)
@@ -114,12 +114,14 @@ class Lipper:
             msg = f"Got response: '{response['Response']}'"
 
         if 'Timing' in response and response['Timing'] is not None:
-            request_duration = response['Timing']['Request']['Received'] - response['Timing']['Request']['Sent']
-            response['Timing']['Response']['Received'] = datetime.datetime.now()
-            response_duration: datetime.timedelta = (response['Timing']['Response']['Received'] -
-                                                     response['Timing']['Response']['Sent'])
-            elapsed = response['Timing']['Response']['Received'] - response['Timing']['Request']['Sent']
-            msg += f", Timing: elapsed: {elapsed}, request: {request_duration}, response: {response_duration}"
+            tx = response['Timing']['Request']
+            rx = response['Timing']['Response']
+            tx_duration = tx['Received'] - tx['Sent']
+            rx['Received'] = datetime.datetime.now()
+            rx_duration: datetime.timedelta = (rx['Received'] - rx['Sent'])
+            elapsed = rx['Received'] - tx['Sent']
+            msg += (f", Timing: elapsed: {humanize.precisedelta(elapsed)}, " +
+                    f"request: {humanize.precisedelta(tx_duration)}, response: {humanize.precisedelta(rx_duration)}")
         
         if msg:
             self.logger.info(msg)
@@ -169,7 +171,7 @@ def parse_ready_packet(packet: dict) -> ReadyResponse:
 if __name__ == '__main__':
     lipper = Lipper(equipment=Equipment.Test, equipment_id=3)
 
-    ready_packet = lipper.receive()
+    ready_packet = lipper._receive()
     ready_packet = parse_ready_packet(ready_packet)
     lipper.logger.info(f"received ready packet with mode={ready_packet.mode}")
 
