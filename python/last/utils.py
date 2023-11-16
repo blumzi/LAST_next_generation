@@ -3,23 +3,39 @@ import logging
 import platform
 import os
 import datetime
-import io
+import json
+from typing import Any
 
 from json import JSONEncoder, JSONDecoder
+from starlette.responses import Response
 
 default_log_level = logging.DEBUG
+default_encoding = "utf-8"
+default_port = 8000
 
 class Equipment(Enum):
     Mount = 1,
     Camera = 2,
     Focuser = 3
-    Test = 4
+    Pswitch = 4
+    Test = 5
+    Undefined = 6
 
 
 equipment_ids = {
     "e": [1, 2],
     "w": [3, 4],
 }
+
+class ValidEquipId(int, Enum):
+    one = '1',
+    two = '2',
+    three = '3',
+    four = '4',
+
+class ValidPswitchId(int, Enum):
+    one = '1',
+    two = '2',
 
 
 class PathMaker:
@@ -128,8 +144,8 @@ class DailyFileHandler(logging.FileHandler):
     def __init__(self, path: str, mode='a', encoding=None, delay=False, errors=None):
         self.path = path
         if "b" not in mode:
-            encoding = io.text_encoding(encoding)
-        logging.FileHandler.__init__(self, filename='', delay=True, mode=mode, encoding=encoding, errors=errors)
+            encoding = default_encoding # io.text_encoding(encoding) # python3.10
+        logging.FileHandler.__init__(self, filename='', delay=True, mode=mode, encoding=encoding)
 
 
 def init_log(logger: logging.Logger):
@@ -163,3 +179,36 @@ def datetime_decoder(dct):
                 pass  # Not a datetime string, so we leave it unchanged
     return dct
     
+LAST_API_ROOT = 'last/api/v1'
+
+class PrettyJSONResponse(Response):
+    media_type = "application/json"
+
+    def render(self, content: Any) -> bytes:
+        return json.dumps(
+            content,
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=4,
+            separators=(", ", ": "),
+        ).encode(default_encoding)
+    
+class ResponseDict(dict):
+    """
+    Defines a Response dictionary which MUST have at least the keys:
+    - Response: The actual response, relevant ONLY when 'Error' is None
+    - Error: Optional error string
+    - ErrorReport: Optional stack trace
+    """
+    def __init__(self, response: str, error=None, error_report=None):
+        d = dict()
+        if error is not None:
+            d['Response'] = None
+            d['Error'] = error
+            d['ErrorReport'] = error_report
+        else:
+            d['Response'] = response
+            d['Error'] = None
+            d['ErrorReport'] = None
+
+        super.__init__(Response=d['Response'], Error=d['Error'], ErrorReport=d['ErrorReport'])

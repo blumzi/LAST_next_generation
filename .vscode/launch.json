@@ -5,11 +5,20 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: Module",
+            "name": "unit-server",
             "type": "python",
             "request": "launch",
-            "module": "lipp",
-            "justMyCode": true,
+            "program": "unit-server.py",
+            "console": "integratedTerminal",
+            // "justMyCode": true
+            "cwd": "${workspaceFolder}/python/last"
+        },
+        {
+            "name": "lipp",
+            "type": "python",
+            "request": "launch",
+            "program": "lipp.py",
+            // "justMyCode": true,
             "cwd": "${workspaceFolder}/python/last"
         }
     ]
