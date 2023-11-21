@@ -45,7 +45,7 @@ class Forwarder(DriverInterface):
             self.port = port
         
         self.equip_name = str(self.equip).replace('Equipment.', '').lower()
-        self.base_url = f"http://{self.remote_address}:{self.port}/{LAST_API_ROOT}/{self.equip_name}/{self.equip_id}"
+        self.base_url = f"http://{self.remote_address}:{self.port}{LAST_API_ROOT}{self.equip_name}/{self.equip_id}"
 
         self.logger = logging.getLogger(f"forwarder-{self.equip_name}-{equip_id}")
         init_log(self.logger)
