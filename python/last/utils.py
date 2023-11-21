@@ -179,7 +179,7 @@ def datetime_decoder(dct):
                 pass  # Not a datetime string, so we leave it unchanged
     return dct
     
-LAST_API_ROOT = 'last/api/v1'
+LAST_API_ROOT = '/last/api/v1/'
 
 class PrettyJSONResponse(Response):
     media_type = "application/json"
