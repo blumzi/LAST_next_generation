@@ -11,15 +11,7 @@
             "program": "unit-server.py",
             "console": "integratedTerminal",
             // "justMyCode": true
-            "cwd": "${workspaceFolder}/python/last"
+            "cwd": "${workspaceFolder}/unit"
         },
-        {
-            "name": "lipp",
-            "type": "python",
-            "request": "launch",
-            "program": "lipp.py",
-            // "justMyCode": true,
-            "cwd": "${workspaceFolder}/python/last"
-        }
     ]
 }

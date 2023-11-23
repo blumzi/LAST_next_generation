@@ -1,15 +1,17 @@
 import datetime
 
-from utils import Equipment, equipment_ids, init_log, datetime_decoder, DateTimeEncoder
+from utils import Equipment, equipment_ids, init_log, datetime_decoder, DateTimeEncoder, DriverState
 import socket
 from collections import OrderedDict
 import json
 import logging
-from subprocess import Popen
-import os
+from subprocess import Popen, DEVNULL
 from enum import Enum
 import humanize
 from driver_interface import DriverInterface
+import threading
+from pydantic import BaseModel
+from fastapi.responses import JSONResponse
 
 
 class ReadyMode(Enum):
@@ -38,9 +40,6 @@ class Response:
     Timing: {}
 
 
-class Ready:
-    Status: str
-
 
 class Driver(DriverInterface):
     """
@@ -56,17 +55,27 @@ class Driver(DriverInterface):
     pending_request: Request
     _available: bool = False
     _reason: str = None
+    state: DriverState = DriverState.Unknown
+    equipment: Equipment
+    equipment_id: int
+    equip: str
+    thread = None
 
-    def __init__(self, equipment: Equipment, equipment_id: int):
-        logger_name = f'lipp-unit-{equipment.name}'
+    def __init__(self, drivers_list: list, equipment: Equipment, equipment_id: int = 0):
+        self.state = DriverState.Initializing
+
+        drivers_list[equipment_id] = self
+
+        self.equipment = equipment
+        self.equip = self.equipment.name.lower()
         if equipment_id is not None:
-            logger_name += f'-{equipment_id}'
-        self.logger = logging.getLogger(logger_name)
+            self.equipment_id = equipment_id
+            self.equip += f'-{self.equipment_id}'
+            
+        self.logger = logging.getLogger(f'lipp-unit-{self.equip}')
         init_log(self.logger)
 
         hostname = socket.gethostname()
-        if not hostname.startswith('last'):
-            hostname = 'last07w'
         if hostname.endswith('e'):
             valid_ids = equipment_ids['e']
         elif hostname.endswith('w'):
@@ -74,36 +83,52 @@ class Driver(DriverInterface):
         else:
             raise Exception("Invalid hostname '{hostname}'")
 
-        if equipment_id not in valid_ids:
+        if equipment_id != 0 and equipment_id not in valid_ids:
             raise Exception(f"Invalid equipment_id '{equipment_id}', should be one of {valid_ids.__str__()}")
 
-        self.local_socket_path = f'\0lipp-unit-{equipment.name.lower()}'
-        if equipment_id is not None:
-            self.local_socket_path += f'-{equipment_id}'
+        self.local_socket_path = f'\0lipp-unit-{self.equip}'
         self.peer_socket_path = self.local_socket_path.replace('unit', 'driver')
 
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.socket.bind(self.local_socket_path)
         self.current_request_id = 0
 
-        cmd=f'last-matlab -nodisplay -nosplash -batch "obs.api.Lipp(\'EquipmentName\', \'{equipment.name.lower()}\', \'EquipmentId\', {equipment_id}).loop();"'
-        self.logger.info(f'popen: "{cmd}"')
-        self.driver_process = Popen(args=cmd, shell=True)
+        cmd=f"matlab -nodisplay -nosplash -batch \"obs.api.Lipp('EquipmentName', '{equipment.name.lower()}'"
+        if equipment_id != 0:
+            cmd += f", 'EquipmentId', {equipment_id}"
+        cmd += ').loop();"'
+        self.logger.info(f'Spawning "{cmd}"')
+        self.driver_process = Popen(args=cmd, stderr=DEVNULL, shell=True)
+        
+        threading.Thread(name=f"{self.equip + '-wait-for-ready-thread'}", target=self.wait_for_ready).start()
 
-        self.logger.info(f"waiting for ready packet")
+    def wait_for_ready(self):
+        self.logger.info(f"waiting for ready packet ...")
         ready_packet = self.receive()
+        reason = f"MATLAB driver reports '{self.equip} is "
         if ready_packet['Response'] == "unavailable":
-            msg = f"MATLAB driver reports '{equipment.name.lower()}{equipment_id}' is 'unavailable'"
-            self.logger.info(msg)
+            reason += "'unavailable'"
+            self.logger.info('wait_for_ready: ' + reason)
             self._available = False
-            self._reason = msg
+            self._reason = reason
+            self.state = DriverState.Unavailable
         elif ready_packet['Response'] == "ready":
             self._available = True
             self._reason = None
-            self.logger.info(f"The MATLAB driver for '{equipment.name.lower()}{equipment_id}' is 'available''")
+            self.logger.info('wait_for_ready: ' + reason + "'available'")
+            self.state = DriverState.Available
 
+    async def device_not_available(self):
+        return JSONResponse({
+            'Response': None,
+            'Error': f"Device '{self.equip}' not available, state={self.state}",
+            'Reason': self._reason,
+        })
 
     def get(self, method: str, **kwargs) -> object:
+        if not self.state == DriverState.Available:
+            return self.device_not_available()
+        
         request = Request()
         self.current_request_id += 1
         request.RequestId = self.current_request_id
@@ -119,6 +144,9 @@ class Driver(DriverInterface):
         return self.receive()
     
     def put(self, method: str, **kwargs) -> object:
+        if not self.state == DriverState.Available:
+            return self.device_not_available()
+        
         request = Request()
         self.current_request_id += 1
         request.RequestId = self.current_request_id
@@ -190,8 +218,18 @@ class Driver(DriverInterface):
         return self._reason
 
 
+class DeviceUnavailable(BaseModel):
+    reason: str
 
+    def __init__(self, reason: str):
+        self.reason = reason
 
+    def __await__(self):
+        return {
+            'Response': None,
+            'Error': f"Device not available ({self.reason})"
+        }
+    
 if __name__ == '__main__':
     driver = Driver(equipment=Equipment.Test, equipment_id=3)
 

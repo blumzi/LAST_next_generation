@@ -37,6 +37,18 @@ class ValidPswitchId(int, Enum):
     one = '1',
     two = '2',
 
+class ValidCoordType(str, Enum):
+    eq = 'eq',
+    hor = 'hor',
+    ha = 'ha',
+    azalt = 'azalt'
+
+class DriverState(Enum):
+    Unknown = 0,
+    Initializing = 1,
+    Forwarding = 2,
+    Available = 3,
+    Unavailable = 4,
 
 class PathMaker:
     top_folder: str
@@ -200,7 +212,7 @@ class ResponseDict(dict):
     - Error: Optional error string
     - ErrorReport: Optional stack trace
     """
-    def __init__(self, response: str, error=None, error_report=None):
+    def __init__(self, response: dict, error=None, error_report=None):
         d = dict()
         if error is not None:
             d['Response'] = None
