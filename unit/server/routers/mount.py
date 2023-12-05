@@ -3,7 +3,7 @@
 #  - by the MATLAB code in 'obs.api.Wrapper.makeFastApiRoutes()'
 #  - derived from the MATLAB class in '/home/ocs/matlab/LAST/LAST_XerxesMount/+inst/@XerxesMountBinary/XerxesMountBinary.m'
 #  - for the 'mount' type of LAST equipment
-#  - on 23-Nov-2023 16:43:28
+#  - on 05-Dec-2023 14:12:55
 #
 # Manual changes will be overridden!
 #
@@ -36,24 +36,35 @@ lipp.Driver(mounts, Equipment.Mount)
 # Method 'abort'
 @router.get(LAST_API_ROOT + 'mount/abort', tags=["mount"], response_class=PrettyJSONResponse)
 async def mount_abort(request: Request):
+    v = list()
+    v.append(None)
     logger.info(f'mount_abort:')
     return await mounts[0].get(method='abort')
 
 # Method 'goTo'
 @router.get(LAST_API_ROOT + 'mount/goTo', tags=["mount"], response_class=PrettyJSONResponse)
 async def mount_goTo(a1: float, a2: float, coordtype: float, request: Request):
-    logger.info(f'mount_goTo:a1={a1} a2={a2} coordtype={coordtype} ')
-    return await mounts[0].get(method='goTo', a1=float, a2=float, coordtype=float)
+    v = list()
+    v.append(None)
+    v.append(a1)
+    v.append(a2)
+    v.append(coordtype)
+    logger.info(f'mount_goTo:a1={v[1]} a2={v[2]} coordtype={v[3]} ')
+    return await mounts[0].get(method='goTo', a1=v[1], a2=v[2], coordtype=v[3])
 
 # Method 'park'
 @router.get(LAST_API_ROOT + 'mount/park', tags=["mount"], response_class=PrettyJSONResponse)
 async def mount_park(request: Request):
+    v = list()
+    v.append(None)
     logger.info(f'mount_park:')
     return await mounts[0].get(method='park')
 
 # Method 'reset'
 @router.get(LAST_API_ROOT + 'mount/reset', tags=["mount"], response_class=PrettyJSONResponse)
 async def mount_reset(request: Request):
+    v = list()
+    v.append(None)
     logger.info(f'mount_reset:')
     return await mounts[0].get(method='reset')
 

@@ -3,7 +3,7 @@
 #  - by the MATLAB code in 'obs.api.Wrapper.makeFastApiRoutes()'
 #  - derived from the MATLAB class in '/home/ocs/matlab/LAST/LAST_QHYccd/+inst/@QHYccd/QHYccd.m'
 #  - for the 'camera' type of LAST equipment
-#  - on 23-Nov-2023 16:43:28
+#  - on 05-Dec-2023 14:12:55
 #
 # Manual changes will be overridden!
 #
@@ -35,31 +35,40 @@ for id in equipment_ids[this_side]:
     lipp.Driver(cameras, Equipment.Camera, id)
 
 for id in equipment_ids[peer_side]:
-    cameras[id] = Forwarder(address=peer_hostname, port=default_port, equip=Equipment.Camera, equip_id=id)
+    cameras[id] = Forwarder(address=peer_hostname, port=default_port, equipment=Equipment.Camera, equip_id=id)
 
 # Method 'abort'
 @router.get(LAST_API_ROOT + 'camera/{id}/abort', tags=["camera"], response_class=PrettyJSONResponse)
 async def camera_abort(id: ValidEquipId, request: Request):
+    v = list()
+    v.append(None)
     logger.info(f'camera_abort: id={id} ')
     return await cameras[id].get(method='abort')
 
 # Method 'saveCurImage'
 @router.get(LAST_API_ROOT + 'camera/{id}/saveCurImage', tags=["camera"], response_class=PrettyJSONResponse)
 async def camera_saveCurImage(id: ValidEquipId, request: Request):
+    v = list()
+    v.append(None)
     logger.info(f'camera_saveCurImage: id={id} ')
     return await cameras[id].get(method='saveCurImage')
 
 # Method 'takeExposure'
 @router.get(LAST_API_ROOT + 'camera/{id}/takeExposure', tags=["camera"], response_class=PrettyJSONResponse)
 async def camera_takeExposure(id: ValidEquipId, request: Request):
+    v = list()
+    v.append(None)
     logger.info(f'camera_takeExposure: id={id} ')
     return await cameras[id].get(method='takeExposure')
 
 # Method 'takeLive'
 @router.get(LAST_API_ROOT + 'camera/{id}/takeLive', tags=["camera"], response_class=PrettyJSONResponse)
 async def camera_takeLive(id: ValidEquipId, num: float, request: Request):
-    logger.info(f'camera_takeLive: id={id} num={num} ')
-    return await cameras[id].get(method='takeLive', num=float)
+    v = list()
+    v.append(None)
+    v.append(num)
+    logger.info(f'camera_takeLive: id={id} num={v[1]} ')
+    return await cameras[id].get(method='takeLive', num=v[1])
 
 # Property 'CamStatus' getter
 @router.get(LAST_API_ROOT + 'camera/{id}/CamStatus', tags=["camera"], response_class=PrettyJSONResponse)

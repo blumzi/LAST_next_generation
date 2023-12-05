@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
-from utils import Equipment
+from utils import Equipment, DriverState
 
 class DriverInterface(ABC):
 
     def __init__(self, equipment_type: Equipment, equipment_id: int = 0) -> None:
-        self.task = task
+        pass
 
     @abstractmethod
     def get(self, method: str, **kwargs):
@@ -16,10 +16,15 @@ class DriverInterface(ABC):
 
     @property
     @abstractmethod
-    def available(self) -> bool:
+    def _state(self) -> DriverState:
         pass
 
     @property
     @abstractmethod
-    def reason_for_not_available(self) -> str:
+    def status(self) -> str:
+        pass
+
+    @property
+    @abstractmethod
+    def info(self) -> dict:
         pass

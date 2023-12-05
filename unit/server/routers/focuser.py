@@ -3,7 +3,7 @@
 #  - by the MATLAB code in 'obs.api.Wrapper.makeFastApiRoutes()'
 #  - derived from the MATLAB class in '/home/ocs/matlab/LAST/LAST_CelestronFocusMotor/+inst/@CelestronFocuser/CelestronFocuser.m'
 #  - for the 'focuser' type of LAST equipment
-#  - on 23-Nov-2023 16:43:27
+#  - on 05-Dec-2023 14:12:54
 #
 # Manual changes will be overridden!
 #
@@ -35,19 +35,35 @@ for id in equipment_ids[this_side]:
     lipp.Driver(focusers, Equipment.Focuser, id)
 
 for id in equipment_ids[peer_side]:
-    focusers[id] = Forwarder(address=peer_hostname, port=default_port, equip=Equipment.Focuser, equip_id=id)
+    focusers[id] = Forwarder(address=peer_hostname, port=default_port, equipment=Equipment.Focuser, equip_id=id)
 
 # Method 'abort'
 @router.get(LAST_API_ROOT + 'focuser/{id}/abort', tags=["focuser"], response_class=PrettyJSONResponse)
 async def focuser_abort(id: ValidEquipId, request: Request):
+    v = list()
+    v.append(None)
     logger.info(f'focuser_abort: id={id} ')
     return await focusers[id].get(method='abort')
 
-# Method 'explode'
-@router.get(LAST_API_ROOT + 'focuser/{id}/explode', tags=["focuser"], response_class=PrettyJSONResponse)
-async def focuser_explode(id: ValidEquipId, param1: str, param2: float, request: Request):
-    logger.info(f'focuser_explode: id={id} param1={param1} param2={param2} ')
-    return await focusers[id].get(method='explode', param1=str, param2=float)
+# Method 'test_exception'
+@router.get(LAST_API_ROOT + 'focuser/{id}/test_exception', tags=["focuser"], response_class=PrettyJSONResponse)
+async def focuser_test_exception(id: ValidEquipId, request: Request):
+    v = list()
+    v.append(None)
+    logger.info(f'focuser_test_exception: id={id} ')
+    return await focusers[id].get(method='test_exception')
+
+# Method 'test_params'
+@router.get(LAST_API_ROOT + 'focuser/{id}/test_params', tags=["focuser"], response_class=PrettyJSONResponse)
+async def focuser_test_params(id: ValidEquipId, param1: str, param2: float, param3: bool, param4: int, request: Request):
+    v = list()
+    v.append(None)
+    v.append(param1)
+    v.append(param2)
+    v.append(param3)
+    v.append(param4)
+    logger.info(f'focuser_test_params: id={id} param1={v[1]} param2={v[2]} param3={v[3]} param4={v[4]} ')
+    return await focusers[id].get(method='test_params', param1=v[1], param2=v[2], param3=v[3], param4=v[4])
 
 # Property 'Connected' getter
 @router.get(LAST_API_ROOT + 'focuser/{id}/Connected', tags=["focuser"], response_class=PrettyJSONResponse)

@@ -1,6 +1,6 @@
 import uvicorn
 from fastapi import FastAPI
-# from unit import Unit
+import unit
 from utils import init_log # , PrettyJSONResponse, HelpResponse, quote, Subsystem
 # from openapi import make_openapi_schema
 from contextlib import asynccontextmanager
@@ -21,8 +21,11 @@ init_log(logger)
 # We need to wait for it to finish before we can import the respective server.router.<class>
 #  modules
 #
-cmd=f'last-matlab -nodisplay -nosplash -batch "obs.api.ApiBase.makeAuxiliaryFiles()"'
-# logger.info(f'calling MATLAB FastApi routers maker with cmd="{cmd}"')
+
+# cmd="NO_STARTUP=1 last-matlab -nodisplay -nosplash -batch 'paths = [\"AstroPack/matlab/base\", \"AstroPack/matlab/util\", \"LAST/LAST_Handle\", \"LAST/LAST_Api\"]; top = fullfile(getenv(\"HOME\"), \"matlab\"); for p = 1:numel(paths); addpath(fullfile(top, paths(p))); end; obs.api.ApiBase.makeAuxiliaryFiles(); exit(0)'"
+
+cmd="last-matlab -nodisplay -nosplash -batch 'obs.api.ApiBase.makeAuxiliaryFiles; exit'"
+logger.info(f'calling MATLAB FastApi routers maker with cmd="{cmd}"')
 routers_maker = Popen(args=cmd, shell=True)
 logger.info(f'Waiting for MATLAB FastApi routers maker')
 routers_maker.wait()
@@ -33,16 +36,14 @@ else:
     exit(routers_maker.returncode)
 
 
-from server.routers import focuser, camera, mount
-import unit
+from server.routers import focuser, camera, mount, pswitch
+from unit import start_lifespan, end_lifespan
 
 @asynccontextmanager
 async def lifespan(fast_app: FastAPI):
-    # unit.start_lifespan()
     pass
     yield
     pass
-    # unit.end_lifespan()
 
 
 app = FastAPI(
@@ -52,6 +53,7 @@ app = FastAPI(
     lifespan=lifespan,
     openapi_url='/openapi.json')
 
+app.include_router(pswitch.router)
 app.include_router(focuser.router)
 app.include_router(camera.router)
 app.include_router(mount.router)

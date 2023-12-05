@@ -5,6 +5,7 @@ import os
 import datetime
 import json
 from typing import Any
+from threading import Timer
 
 from json import JSONEncoder, JSONDecoder
 from starlette.responses import Response
@@ -224,3 +225,9 @@ class ResponseDict(dict):
             d['ErrorReport'] = None
 
         super.__init__(Response=d['Response'], Error=d['Error'], ErrorReport=d['ErrorReport'])
+
+
+class RepeatTimer(Timer):
+    def run(self):
+        while not self.finished.wait(self.interval):
+            self.function(*self.args, **self.kwargs)
