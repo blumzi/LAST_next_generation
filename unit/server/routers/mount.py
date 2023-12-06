@@ -3,7 +3,7 @@
 #  - by the MATLAB code in 'obs.api.Wrapper.makeFastApiRoutes()'
 #  - derived from the MATLAB class in '/home/ocs/matlab/LAST/LAST_XerxesMount/+inst/@XerxesMountBinary/XerxesMountBinary.m'
 #  - for the 'mount' type of LAST equipment
-#  - on 05-Dec-2023 14:12:55
+#  - on 06-Dec-2023 12:34:55
 #
 # Manual changes will be overridden!
 #
