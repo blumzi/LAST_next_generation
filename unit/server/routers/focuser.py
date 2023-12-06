@@ -3,7 +3,7 @@
 #  - by the MATLAB code in 'obs.api.Wrapper.makeFastApiRoutes()'
 #  - derived from the MATLAB class in '/home/ocs/matlab/LAST/LAST_CelestronFocusMotor/+inst/@CelestronFocuser/CelestronFocuser.m'
 #  - for the 'focuser' type of LAST equipment
-#  - on 05-Dec-2023 14:12:54
+#  - on 06-Dec-2023 12:34:54
 #
 # Manual changes will be overridden!
 #
