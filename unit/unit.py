@@ -44,7 +44,18 @@ class Unit(Activities):
         self.timer.start()
 
     def on_timer(self):
-        if self.is_active(UnitActivities.Slewing) and mount.is_idle:
+        """
+        Runs at pre-defined intervals.
+        - Should be as short as possible.
+        - Gets the current status from the various components and decides whether activities can
+           be ended.
+        """
+        mount_st = mount.status
+        #
+        # If we (the unit) initiated a slew (UnitActivities.Slewing) and the mount
+        #  became idle, the activity has completed
+        #
+        if self.is_active(UnitActivities.Slewing) and mount_st.activities == 0:
             logger.info(f"The mount arrived to destination, ending {UnitActivities.Slewing}")
             self.end_activity(UnitActivities.Slewing)
 
