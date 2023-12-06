@@ -8,21 +8,21 @@ import httpx
 from enum import Enum
 from pydantic import BaseModel, Field
 from threading import Thread
-import json
+import asyncio
 
 import xmltodict
-default_names = ["Unknown1", "Unknown2","Unknown3","Unknown4","Unknown5","Unknown6"]
-pswitches = dict()
+default_sockets = {
+    "Unknown1": False,
+    "Unknown2": False,
+    "Unknown3": False,
+    "Unknown4": False,
+    "Unknown5": False,
+    "Unknown6": False,
+}
 
 logger = logging.getLogger('pswitch-FastApi')
 init_log(logger)
 
-
-class SocketName(BaseModel):
-    name: str = Field(..., description="Socket Name")
-    description: str = Field(None, description="a b c")
-
-tag = "pswitch01"
 
 router = APIRouter()
 hostname = socket.gethostname()
@@ -46,6 +46,32 @@ class PswitchDriver():
              return
         
         self.base_url = f"http://{self.ipaddr}"
+        
+        for side in ["e", "w"]:
+            try:
+                for page in ["st0.xml", "st2.xml"]:
+                    with httpx.Client() as client:
+                        response = client.get(f"{self.base_url}/{page}", auth=self._auth, timeout=5)
+                        response.raise_for_status()
+                        if response.is_success:
+                            if page == "st0.xml":
+                                dynamic_data = xmltodict.parse(response.content)
+                                values = list()
+                                for i in range(1, 7):
+                                    values.append(dynamic_data['response'][f"out{i}"])
+                            else:                         
+                                static_data = xmltodict.parse(response.content)
+                                names = list()
+                                for i in range(6, 12):
+                                    names.append(static_data['response'][f"r{i}"])
+                        else:
+                            self.sockets = default_sockets
+            except Exception as ex:
+                self.sockets = default_sockets
+            
+            self.sockets = dict()
+            for i in range(0, 6):
+                self.sockets[names[i]] = True if values[i] == '1' else False
 
     async def get(self, page: str = "/") -> str:
         async with httpx.AsyncClient() as client:
@@ -94,6 +120,30 @@ class PswitchDriver():
     async def names(self) -> list:
         names = await self.get_names()
         return names
+    
+    async def turnOn(self, socket_name: str) -> str:
+        names = list(self.sockets.keys())
+        if socket_name not in names:
+            raise Exception(f"Bad socket name '{socket_name}'")
+        idx = names.index(socket_name)
+        await self.get(page=f"/outs.cgi?out{idx}=1")
+        return "ok"
+    
+    async def turnOff(self, socket_name: str) -> str:
+        names = list(self.sockets.keys())
+        if socket_name not in names:
+            raise Exception(f"Bad socket name '{socket_name}'")
+        idx = names.index(socket_name)
+        await self.get(page=f"/outs.cgi?out{idx}=0")
+        return "ok"
+    
+    async def toggle(self, socket_name: str) -> str:
+        names = list(self.sockets.keys())
+        if socket_name not in names:
+            raise Exception(f"Bad socket name '{socket_name}'")
+        idx = names.index(socket_name)
+        await self.get(page=f"/outs.cgi?out={idx}")
+        return "ok"
 
 
 pswitch = {
@@ -118,30 +168,61 @@ async def west_socket_names():
     return JSONResponse(names)
 
         
-async def east_isOn(socket_name: str = Query(enum=east_names)) -> bool:
+# isOn
+async def east_isOn(socket_name: str = Query(enum=list(pswitch["e"].sockets.keys()))) -> bool:
     ps = pswitch["e"]
-    names = await ps.names
-    if socket_name in names:
-        state = ps.sockets[socket_name]
-        return JSONResponse(state)
+    await asyncio.sleep(0)
+    if socket_name in list(ps.sockets.keys()):
+        return JSONResponse(ps.sockets[socket_name])
 
         
-async def west_isOn(socket_name: str = Query(enum=west_names)) -> bool:
+async def west_isOn(socket_name: str = Query(enum=list(pswitch["w"].sockets.keys()))) -> bool:
     ps = pswitch["w"]
-    names = await ps.names
-    if socket_name in names:
-        state = ps.sockets[socket_name]
-        return JSONResponse(state)
+    await asyncio.sleep(0)
+    if socket_name in list(ps.sockets.keys()):
+        return JSONResponse(ps.sockets[socket_name])
+
+
+# turnOn
+async def east_turnOn(socket_name: str = Query(enum=list(pswitch["e"].sockets.keys()))) -> bool:
+    await asyncio.sleep(0)
+    return JSONResponse(pswitch["e"].turnOn(socket_name))
+
         
+async def west_turnOn(socket_name: str = Query(enum=list(pswitch["w"].sockets.keys()))) -> bool:
+    await asyncio.sleep(0)
+    return JSONResponse(pswitch["w"].turnOn(socket_name))
+
+# turnOff
+async def east_turnOff(socket_name: str = Query(enum=list(pswitch["e"].sockets.keys()))) -> bool:
+    await asyncio.sleep(0)
+    return JSONResponse(pswitch["e"].turnOff(socket_name))
+
+        
+async def west_turnOff(socket_name: str = Query(enum=list(pswitch["w"].sockets.keys()))) -> bool:
+    await asyncio.sleep(0)
+    return JSONResponse(pswitch["w"].turnOff(socket_name))
+
+# toggle
+async def east_toggle(socket_name: str = Query(enum=list(pswitch["e"].sockets.keys()))) -> bool:
+    await asyncio.sleep(0)
+    return JSONResponse(pswitch["e"].toggle(socket_name))
+
+        
+async def west_toggle(socket_name: str = Query(enum=list(pswitch["w"].sockets.keys()))) -> bool:
+    await asyncio.sleep(0)
+    return JSONResponse(pswitch["w"].toggle(socket_name))
+
+
 for side in pswitch.keys():
     base_url = LAST_API_ROOT + f"{pswitch[side].hostname}"
     tag = pswitch[side].hostname
 
-    endpoint = east_socket_names if side == "e" else west_socket_names
-    router.add_api_route(path=base_url + "/names", tags = [tag], endpoint=endpoint)
-
-    # endpoint = east_isOn if side == "e" else west_isOn
-    # router.add_api_route(path=base_url + "/isOn", tags = [tag], endpoint=endpoint)
+    router.add_api_route(path=base_url + "/names",   tags = [tag], endpoint=east_socket_names if side == "e" else west_socket_names)
+    router.add_api_route(path=base_url + "/isOn",    tags = [tag], endpoint=east_isOn         if side == "e" else west_isOn)
+    router.add_api_route(path=base_url + "/turnOn",  tags = [tag], endpoint=east_turnOn       if side == "e" else west_turnOn)
+    router.add_api_route(path=base_url + "/turnOff", tags = [tag], endpoint=east_turnOff      if side == "e" else west_turnOff)
+    router.add_api_route(path=base_url + "/toggle",  tags = [tag], endpoint=east_toggle       if side == "e" else west_toggle)
 
 # @router.get(LAST_API_ROOT + "pswitch/{side}/names", tags=[tag], response_class=PrettyJSONResponse)
 # async def pswitch_names(side: ValidSides) -> list:
