@@ -1,7 +1,10 @@
 from abc import ABC, abstractmethod
-from utils import Equipment, DriverState
+from utils import Equipment
+from datetime import datetime
 
 class DriverInterface(ABC):
+
+    _detected: bool = False
 
     def __init__(self, equipment_type: Equipment, equipment_id: int = 0) -> None:
         pass
@@ -16,7 +19,17 @@ class DriverInterface(ABC):
 
     @property
     @abstractmethod
-    def _state(self) -> DriverState:
+    def detected(self) -> bool:
+        pass
+
+    @property
+    @abstractmethod
+    def responding(self) -> bool:
+        pass
+
+    @property
+    @abstractmethod
+    def last_response(self) -> datetime:
         pass
 
     @property

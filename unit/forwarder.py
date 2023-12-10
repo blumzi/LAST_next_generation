@@ -1,12 +1,11 @@
 import httpx
 import socket
-import traceback
 import logging
-from utils import Equipment, init_log, LAST_API_ROOT, DriverState
+from utils import Equipment, init_log, LAST_API_ROOT
 from urllib.parse import urlencode
-import sys
 from driver_interface import DriverInterface
 from fastapi.responses import JSONResponse
+import datetime
 
 class Forwarder(DriverInterface):
     remote_address: str = None
@@ -16,8 +15,9 @@ class Forwarder(DriverInterface):
     equip: str
     equip_id: int
     _reason: str = None
-    _state = DriverState.Unknown
     _info: dict
+    _responding: bool = False;
+    _last_response: datetime.datetime = None
 
     def __init__(self, address: str, port: int = -1, equipment: Equipment = Equipment.Undefined, equip_id: int = 0) -> None:
         if address:
@@ -53,7 +53,8 @@ class Forwarder(DriverInterface):
             'Url': self.base_url,
         }
 
-        self._state = DriverState.Available
+        self._responding = False
+        self._last_response = None
 
         self.logger = logging.getLogger(f"forwarder-{equip_name}-{self.equip_id}")
         init_log(self.logger)
@@ -70,44 +71,62 @@ class Forwarder(DriverInterface):
             timeout = 5
             try:
                 response = await client.get(url, timeout=timeout, follow_redirects=False)
+                self._responding = True
+                self._last_response = datetime.datetime.now()
                 response.raise_for_status()
             except Exception as ex:
-                self._state = DriverState.Unavailable
+                self._detected = False
+                self._responding = False
                 self.logger.error(f"HTTP error ({ex.args[0]})")
                 return JSONResponse({
                     'Error': ex.args[0]
                 })
             
             if response.is_success:
-                self._state = DriverState.Available
+                self._detected = True
                 return response.content
     
 
-    async def put(self, method, params) -> dict:
+    async def put(self, method: str, **kwargs) -> dict:
+        url = self.base_url + '/' + method
+        if kwargs != {}:
+            url += "?" + urlencode(kwargs)
+        self.logger.info(f"forwarding get(url='{url}')")
         async with httpx.AsyncClient() as client:
+            timeout = 5
             try:
-                url = self.base_url + '/' + method
-                if params is not None:
-                    url += "?" + urlencode(params)
-                self.logger.info(f"forwarding get(url='{url}')")
-                return {
-                    'Response': f"dummy response for url='{url}'",
-                    # 'Response': await client.put(url),
-                    'Error': None,
-                    'ErrorReport': None,
-                }
+                response = await client.put(url, timeout=timeout, follow_redirects=False)
+                response.raise_for_status()
             except Exception as ex:
-                return {
-                    'Response': None,
-                    'Error': 'f{ex}',
-                    'ErrorReport': traceback.format_exception(sys.exc_info()),
-                }
+                self._detected = False
+                self.logger.error(f"HTTP error ({ex.args[0]})")
+                return JSONResponse({
+                    'Error': ex.args[0]
+                })
+            
+            if response.is_success:
+                self._detected = True
+                return response.content
+            
             
     def info(self):
         return self._info
     
     def status(self):
         pass
+    
+    @property
+    def detected(self) -> bool:
+        """Was the actual device detected?"""
+        return self._detected
+    
+    def detected_setter(self, value: bool):
+        self._detected = value
 
-    def state(self) -> DriverState:
-        return self._state
+    @property
+    def responding(self) -> bool:
+        return self._responding
+    
+    @property
+    def last_response(self) -> datetime.datetime:
+        return self._last_response

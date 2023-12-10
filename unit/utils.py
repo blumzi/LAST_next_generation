@@ -9,6 +9,7 @@ from threading import Timer
 
 from json import JSONEncoder, JSONDecoder
 from starlette.responses import Response
+import fastapi.responses
 
 default_log_level = logging.DEBUG
 default_encoding = "utf-8"
@@ -43,13 +44,6 @@ class ValidCoordType(str, Enum):
     hor = 'hor',
     ha = 'ha',
     azalt = 'azalt'
-
-class DriverState(Enum):
-    Unknown = 0,
-    Initializing = 1,
-    Forwarding = 2,
-    Available = 3,
-    Unavailable = 4,
 
 class PathMaker:
     top_folder: str
@@ -231,3 +225,8 @@ class RepeatTimer(Timer):
     def run(self):
         while not self.finished.wait(self.interval):
             self.function(*self.args, **self.kwargs)
+
+
+def jsonResponse(obj: object) -> str:
+    pretty_json = json.dumps(obj, indent=2, default=str)
+    return fastapi.responses.JSONResponse(content=json.loads(pretty_json), media_type="aplication/json")

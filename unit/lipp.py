@@ -1,6 +1,6 @@
 import datetime
 
-from utils import Equipment, equipment_ids, init_log, datetime_decoder, DateTimeEncoder, DriverState
+from utils import Equipment, equipment_ids, init_log, datetime_decoder, DateTimeEncoder
 import socket
 from collections import OrderedDict
 import json
@@ -55,14 +55,17 @@ class Driver(DriverInterface):
     driver_process = None
     pending_request: Request
     _reason: str = None
-    _state: DriverState = DriverState.Unknown
     equipment: Equipment
     equipment_id: int
     equip: str
     _info: dict
+    _responding: bool = False
+    _last_response: datetime.datetime = None
+    _receive_timeout = 5 # seconds
+    _ready_timeout = 30 # be patient, matlab needs to come up
+
 
     def __init__(self, drivers_list: list, equipment: Equipment, equipment_id: int = 0):
-        self._state = DriverState.Initializing
 
         drivers_list[equipment_id] = self
 
@@ -95,6 +98,7 @@ class Driver(DriverInterface):
         self.peer_socket_path = self.local_socket_path.replace('unit', 'driver')
 
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self.socket.settimeout(self._ready_timeout)
         self.socket.bind(self.local_socket_path)
         self.current_request_id = 0
 
@@ -104,6 +108,9 @@ class Driver(DriverInterface):
         cmd += ').loop();"'
         self.logger.info(f'Spawning "{cmd}"')
         self.driver_process = Popen(args=cmd, stderr=DEVNULL, shell=True)
+
+        self._responding = False
+        self._last_response = None
         
         threading.Thread(name=f"{self.equip + '-wait-for-ready-thread'}", target=self.wait_for_ready).start()
         threading.Thread(name=f"{self.equip + '-monitor-thread'}", target=self.process_monitor).start()
@@ -126,21 +133,27 @@ class Driver(DriverInterface):
     def wait_for_ready(self):
         self.logger.info(f"waiting for ready packet ...")
         ready_packet = self.receive()
-        reason = f"MATLAB driver reports '{self.equip} is "
-        if ready_packet['Value'] == "unavailable":
-            reason += "'unavailable'"
-            self.logger.info('wait_for_ready: ' + reason)
-            self._reason = reason
-            self._state = DriverState.Unavailable
-        elif ready_packet['Value'] == "available":
-            self._reason = None
-            self.logger.info("wait_for_ready: 'available'")
-            self._state = DriverState.Available
 
-    async def device_not_available(self):
+        if ready_packet is None:
+            self._responding = False
+            self._detected = False
+        else:
+            self.socket.settimeout(self._receive_timeout) # from now on responses should come faster
+            reason = f"MATLAB driver reports '{self.equip} is "
+            if ready_packet['Value'] == "not-detected":
+                reason += "'not-detected'"
+                self.logger.info('wait_for_ready: ' + reason)
+                self._reason = reason
+                self._detected = False
+            elif ready_packet['Value'] == "detected":
+                self._reason = None
+                self.logger.info("wait_for_ready: 'detected'")
+                self._detected = True
+
+    async def device_not_detected(self):
         await asyncio.sleep(0)
         return JSONResponse({
-            'Error': f"Device '{self.equip}' not available, state={self._state}, reason={self._reason}",
+            'Error': f"Device '{self.equip}' not-detected, state={self._state}, reason={self._reason}",
         })
     
     async def connection_refused(self):
@@ -152,8 +165,8 @@ class Driver(DriverInterface):
     async def get(self, method: str, **kwargs) -> object:
         await asyncio.sleep(0)
 
-        # if not self._state == DriverState.Available:
-        #     return self.device_not_available()
+        # if not self.detected:
+        #     return self.device_not_detected()
         
         request = Request()
         self.current_request_id += 1
@@ -176,8 +189,8 @@ class Driver(DriverInterface):
     async def put(self, method: str, **kwargs) -> object:
         await asyncio.sleep(0)
 
-        # if not self._state == DriverState.Available:
-        #     return self.device_not_available()
+        # if not self.detected:
+        #     return self.device_not_detected()
         
         request = Request()
         self.current_request_id += 1
@@ -192,6 +205,7 @@ class Driver(DriverInterface):
         try:
             self.socket.sendto(data, self.peer_socket_path)
         except ConnectionRefusedError:
+            self._responding = False
             return self.connection_refused()
 
         response = self.receive()
@@ -199,7 +213,15 @@ class Driver(DriverInterface):
 
     def receive(self):
         label = "lipp.receive: "
-        data, address = self.socket.recvfrom(self._max_bytes)
+        try:
+            data, address = self.socket.recvfrom(self._max_bytes)
+            self._responding = True
+            self._last_response = datetime.datetime.now()
+        except socket.timeout as ex:
+            self.logger.error(f"Timeout ({self.socket.gettimeout()} sec.) while recvfrom on '{self.peer_socket_path[1:]}'")
+            self._responding = False
+            return None
+
         self.logger.info(label + f"got '{data}' from '{address}")
         response = json.loads(data.decode(), object_hook=datetime_decoder)
 
@@ -249,9 +271,22 @@ class Driver(DriverInterface):
     
     def status(self):
         pass
+    
+    @property
+    def detected(self) -> bool:
+        """Was the actual device detected?"""
+        return self._detected
+    
+    def detected_setter(self, value: bool):
+        self._detected = value
 
-    def state(self) -> DriverState:
-        return self._state
+    @property
+    def responding(self) -> bool:
+        return self._responding
+    
+    @property
+    def last_response(self):
+        return self._last_response
 
 
 class DeviceUnavailable(BaseModel):

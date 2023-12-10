@@ -1,12 +1,9 @@
 from fastapi import APIRouter, Request
-from utils import LAST_API_ROOT, PrettyJSONResponse, equipment_ids, Equipment, default_port, init_log, ValidEquipId, ResponseDict
+from utils import LAST_API_ROOT, PrettyJSONResponse, init_log
 import socket
-from forwarder import Forwarder
 import logging
-from fastapi.responses import JSONResponse
 from subprocess import Popen
-from enum import IntFlag
-from utils import RepeatTimer
+from utils import RepeatTimer, jsonResponse
 
 logger = logging.getLogger('unit-FastApi')
 init_log(logger)
@@ -84,26 +81,38 @@ class Unit(Activities):
             
             for f in focusers[1:5]:
                 stat['Devices']['Focusers'].append({
-                    'DriverState': str(f.state()),
+                    'Detected': f.detected,
+                    'Comms': {
+                        'Responding': f.responding,
+                        'LastResponse': f.last_response,
+                    },
                     'Info': f.info(),
                 })
                 
             for c in cameras[1:5]:
                 stat['Devices']['Cameras'].append({
-                    'DriverState': str(c.state()),
+                    'Detected': c.detected,
+                    'Comms': {
+                        'Responding': f.responding,
+                        'LastResponse': f.last_response,
+                    },
                     'Info': c.info(),
                 })
 
             for m in mounts:
                 stat['Devices']['Mount'].append({
-                    'DriverState': str(m.state()),
+                    'Detected': m.detected,
+                    'Comms': {
+                        'Responding': f.responding,
+                        'LastResponse': f.last_response,
+                    },
                     'Info': m.info(),
                 })
 
-            return JSONResponse({"Value": stat})
+            return jsonResponse({"Value": stat})
         
         except Exception as ex:
-            return JSONResponse({"Exception": ex})
+            return jsonResponse({"Exception": ex})
     
     def abort(self):
 
@@ -117,10 +126,10 @@ class Unit(Activities):
                 f.abort()
             
             self.end_activity(UnitActivities.Aborting)
-            return JSONResponse({"Value": "ok"})
+            return jsonResponse({"Value": "ok"})
         
         except Exception as ex:
-            return JSONResponse({"Exception": ex})
+            return jsonResponse({"Exception": ex})
 
 
 unit = Unit()
