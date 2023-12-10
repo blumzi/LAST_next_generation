@@ -1,6 +1,4 @@
 from enum import IntFlag
-import datetime
-import humanize
 
 Idle = 0
 
