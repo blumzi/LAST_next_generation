@@ -4,6 +4,9 @@ import socket
 import logging
 from subprocess import Popen
 from utils import RepeatTimer, jsonResponse
+import lipp
+
+subprocesses = list()
 
 logger = logging.getLogger('unit-FastApi')
 init_log(logger)
@@ -33,6 +36,7 @@ mount = mounts[0]
 class Unit(Activities):
 
     timer: RepeatTimer
+    _terminating = False
 
     def __init__(self) -> None:
         super().__init__()
@@ -131,6 +135,13 @@ class Unit(Activities):
         except Exception as ex:
             return jsonResponse({"Exception": ex})
 
+    async def quit(self):
+        logger.info("Quiting")
+        self.timer.stop()
+        for driver in [*focusers, *cameras, *mounts]:
+            if isinstance(driver, lipp.Driver):
+                await driver.quit()
+
 
 unit = Unit()
 
@@ -143,6 +154,11 @@ async def unit_status(request: Request) -> str:
 @router.get(LAST_API_ROOT + 'unit/abort', tags=["unit"], response_class=PrettyJSONResponse)
 async def unit_abort(request: Request):
     unit.abort();
+
+# Method 'quit'
+@router.get(LAST_API_ROOT + 'unit/quit', tags=["unit"], response_class=PrettyJSONResponse)
+async def unit_quit(request: Request):
+    await unit.quit();
 
 def start_lifespan():
     #
@@ -167,4 +183,5 @@ def start_lifespan():
         exit(routers_maker.returncode)
 
 def end_lifespan():
-    pass
+    logger.info(f"end_lifespan:") 
+    unit.quit()

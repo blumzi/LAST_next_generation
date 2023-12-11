@@ -14,7 +14,6 @@ from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 import time
 import asyncio
-
 class ReadyMode(Enum):
     Ready = 1
     Routed = 2
@@ -63,6 +62,9 @@ class Driver(DriverInterface):
     _last_response: datetime.datetime = None
     _receive_timeout = 5 # seconds
     _ready_timeout = 30 # be patient, matlab needs to come up
+    _waiter_for_ready_thread: threading.Thread
+    _process_monitor_thread: threading.Thread
+    _terminating = False
 
 
     def __init__(self, drivers_list: list, equipment: Equipment, equipment_id: int = 0):
@@ -112,15 +114,15 @@ class Driver(DriverInterface):
         self._responding = False
         self._last_response = None
         
-        threading.Thread(name=f"{self.equip + '-wait-for-ready-thread'}", target=self.wait_for_ready).start()
-        threading.Thread(name=f"{self.equip + '-monitor-thread'}", target=self.process_monitor).start()
+        self._waiter_for_ready_thread = threading.Thread(name=f"{self.equip + '-wait-for-ready-thread'}", target=self.wait_for_ready).start()
+        self._process_monitor_thread = threading.Thread(name=f"{self.equip + '-monitor-thread'}", target=self.process_monitor).start()
 
     def process_monitor(self):
         """
         Monitors the LIPP (MATLAB) process for this driver
         - Idea: maybe it will restart dead processes (frequent restart handling ?!?)
         """
-        while True:
+        while not self._terminating:
             if self.driver_process is not None:  # still alive
                 if self.driver_process.poll() is None:
                     self._info['ProcessId'] = self.driver_process.pid
@@ -150,23 +152,13 @@ class Driver(DriverInterface):
                 self.logger.info("wait_for_ready: 'detected'")
                 self._detected = True
 
-    async def device_not_detected(self):
-        await asyncio.sleep(0)
-        return JSONResponse({
-            'Error': f"Device '{self.equip}' not-detected, state={self._state}, reason={self._reason}",
-        })
-    
-    async def connection_refused(self):
-        await asyncio.sleep(0)
-        return JSONResponse({
-            'Error': f"LIPP connection to '{self.peer_socket_path[1:]}' refused",
-        })
-
     async def get(self, method: str, **kwargs) -> object:
         await asyncio.sleep(0)
 
         # if not self.detected:
-        #     return self.device_not_detected()
+        #     return JSONResponse({
+        #     'Error': f"Device '{self.equip}' not-detected, state={self._state}, reason={self._reason}",
+        # })
         
         request = Request()
         self.current_request_id += 1
@@ -181,16 +173,20 @@ class Driver(DriverInterface):
         try:
             self.socket.sendto(data, self.peer_socket_path)
         except ConnectionRefusedError:
-            return self.connection_refused()
+            return  JSONResponse({
+                'Error': f"LIPP connection to '{self.peer_socket_path[1:]}' refused",
+            })
 
         response = self.receive()
-        return response['Value']
+        return response['Value'] if 'Value' in response else None
     
     async def put(self, method: str, **kwargs) -> object:
         await asyncio.sleep(0)
 
         # if not self.detected:
-        #     return self.device_not_detected()
+        #     return return JSONResponse({
+        #     'Error': f"Device '{self.equip}' not-detected, state={self._state}, reason={self._reason}",
+        # })
         
         request = Request()
         self.current_request_id += 1
@@ -206,7 +202,9 @@ class Driver(DriverInterface):
             self.socket.sendto(data, self.peer_socket_path)
         except ConnectionRefusedError:
             self._responding = False
-            return self.connection_refused()
+            return JSONResponse({
+            'Error': f"LIPP connection to '{self.peer_socket_path[1:]}' refused",
+        })
 
         response = self.receive()
         return response['Value']
@@ -265,6 +263,12 @@ class Driver(DriverInterface):
         if self.socket:
             self.socket.close()
         return self._reason
+    
+    async def quit(self):
+        self._terminating = True # tell the process monitor threads to die
+        self.logger.info(f"quit: Sending method='quit' to pid={self.driver_process.pid}")
+        await self.get(method='quit')
+        self.driver_process.terminate()
     
     def info(self):
         return self._info

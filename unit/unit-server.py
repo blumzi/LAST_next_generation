@@ -10,6 +10,9 @@ from contextlib import asynccontextmanager
 from socket import gethostname
 import logging
 from subprocess import Popen
+import asyncio
+import signal
+from unit import subprocesses
 
 logger = logging.getLogger('last-unit-server')
 init_log(logger)
@@ -27,6 +30,7 @@ init_log(logger)
 cmd="last-matlab -nodisplay -nosplash -batch 'obs.api.ApiBase.makeAuxiliaryFiles; exit'"
 logger.info(f'calling MATLAB FastApi routers maker with cmd="{cmd}"')
 routers_maker = Popen(args=cmd, shell=True)
+subprocesses.append(routers_maker)
 logger.info(f'Waiting for MATLAB FastApi routers maker')
 routers_maker.wait()
 if routers_maker.returncode == 0:
@@ -43,7 +47,7 @@ from unit import start_lifespan, end_lifespan
 async def lifespan(fast_app: FastAPI):
     pass
     yield
-    pass
+    end_lifespan
 
 
 app = FastAPI(
@@ -52,6 +56,17 @@ app = FastAPI(
     redocs_url='/redocs',
     lifespan=lifespan,
     openapi_url='/openapi.json')
+
+# async def handle_sigint(signum, frame):
+#     print("SIGINT received, shutting down...")
+#     for proc in subprocesses:
+#         proc.terminate()
+#     # Stop the server
+#     loop.stop()
+
+# # Register the signal handler
+# loop = asyncio.get_event_loop()
+# loop.add_signal_handler(signal.SIGINT, lambda: asyncio.create_task(handle_sigint(signal.SIGINT, None)))
 
 app.include_router(pswitch.router)
 app.include_router(focuser.router)
