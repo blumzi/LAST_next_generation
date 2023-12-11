@@ -162,3 +162,4 @@ cython_debug/
 unit/server/routers/focuser.py
 unit/server/routers/camera.py
 unit/server/routers/mount.py
+*.swp
