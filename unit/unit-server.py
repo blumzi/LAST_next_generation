@@ -2,17 +2,10 @@ import uvicorn
 from fastapi import FastAPI
 import unit
 from utils import init_log # , PrettyJSONResponse, HelpResponse, quote, Subsystem
-# from openapi import make_openapi_schema
 from contextlib import asynccontextmanager
-# import psutil
-# from fastapi.responses import RedirectResponse
-# from fastapi.staticfiles import StaticFiles
 from socket import gethostname
 import logging
 from subprocess import Popen
-import asyncio
-import signal
-from unit import subprocesses
 
 logger = logging.getLogger('last-unit-server')
 init_log(logger)
@@ -30,7 +23,6 @@ init_log(logger)
 cmd="last-matlab -nodisplay -nosplash -batch 'obs.api.ApiBase.makeAuxiliaryFiles; exit'"
 logger.info(f'calling MATLAB FastApi routers maker with cmd="{cmd}"')
 routers_maker = Popen(args=cmd, shell=True)
-subprocesses.append(routers_maker)
 logger.info(f'Waiting for MATLAB FastApi routers maker')
 routers_maker.wait()
 if routers_maker.returncode == 0:
@@ -41,32 +33,12 @@ else:
 
 
 from server.routers import focuser, camera, mount, pswitch
-from unit import start_lifespan, end_lifespan
-
-@asynccontextmanager
-async def lifespan(fast_app: FastAPI):
-    pass
-    yield
-    end_lifespan
-
 
 app = FastAPI(
     title=f'LAST Unit Api server on {gethostname()}',
     docs_url='/docs',
     redocs_url='/redocs',
-    lifespan=lifespan,
     openapi_url='/openapi.json')
-
-# async def handle_sigint(signum, frame):
-#     print("SIGINT received, shutting down...")
-#     for proc in subprocesses:
-#         proc.terminate()
-#     # Stop the server
-#     loop.stop()
-
-# # Register the signal handler
-# loop = asyncio.get_event_loop()
-# loop.add_signal_handler(signal.SIGINT, lambda: asyncio.create_task(handle_sigint(signal.SIGINT, None)))
 
 app.include_router(pswitch.router)
 app.include_router(focuser.router)
@@ -74,5 +46,15 @@ app.include_router(camera.router)
 app.include_router(mount.router)
 app.include_router(unit.router)
 
+@app.get("/shutdown")
+async def shutdown():
+    await unit.unit.quit()
+    await uvicorn_server.shutdown()
+    return {"message": "Server is shutting down"}
+
+uvicorn_server = None
+
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    config = uvicorn.Config(app=app, host="127.0.0.1", port=8000)
+    uvicorn_server = uvicorn.Server(config=config)
+    uvicorn_server.run()
