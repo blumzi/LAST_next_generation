@@ -1,13 +1,15 @@
 #!/bin/bash
 
-trap die SIGINT
+trap die SIGINT SIGHUP
 
 function die() {
+    wget -O - -o /dev/null http://127.0.0.1:8000/last/api/v1/unit/quit
+    sleep 1
     pkill -9 -g ${pid}
 }
 
 cd /home/ocs/python/LAST_next_generation
 source .venv/bin/activate
-python3 unit/unit-server.py >/dev/null 2>&1 &
+python3 unit/unit-server.py &
 pid=$!
 wait -n
