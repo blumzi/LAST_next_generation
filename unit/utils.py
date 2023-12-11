@@ -5,7 +5,7 @@ import os
 import datetime
 import json
 from typing import Any
-from threading import Timer
+from threading import Timer, Event
 
 from json import JSONEncoder, JSONDecoder
 from starlette.responses import Response
@@ -222,9 +222,18 @@ class ResponseDict(dict):
 
 
 class RepeatTimer(Timer):
+    def __init__(self, interval, function):
+        super(RepeatTimer, self).__init__(interval=interval, function=function)
+        self.interval = interval
+        self.function = function
+        self.stopped = Event()
+
     def run(self):
-        while not self.finished.wait(self.interval):
+        while not self.stopped.wait(self.interval):
             self.function(*self.args, **self.kwargs)
+
+    def stop(self):
+        self.stopped.set()
 
 
 def jsonResponse(obj: object) -> str:
