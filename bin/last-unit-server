@@ -1,15 +1,35 @@
 #!/bin/bash
 
-trap die SIGINT SIGHUP
+PROG=$(basename ${0})
 
-function die() {
-    wget -O - -o /dev/null http://127.0.0.1:8000/last/api/v1/unit/quit
-    sleep 1
-    pkill -9 -g ${pid}
+trap kill_unit_server SIGINT SIGHUP
+
+function kill_unit_server() {
+    wget -O /dev/null -o /dev/null http://127.0.0.1:8000/shutdown &
+    sleep 2
+    pkill -9 -f "python3 unit/unit-server.py"
+    pkill -9 -f obs.api.Lipp
 }
 
-cd /home/ocs/python/LAST_next_generation
-source .venv/bin/activate
-python3 unit/unit-server.py &
-pid=$!
-wait -n
+function usage() {
+    echo ""
+    echo " Usage:"
+    echo "  ${PROG} start|stop"
+    echo ""
+}
+
+case "${1}" in
+    start)
+        cd /home/ocs/python/LAST_next_generation
+        source .venv/bin/activate
+        python3 unit/unit-server.py
+        ;;
+
+    stop)
+        kill_unit_server
+        ;;
+
+    *)
+        usage
+        ;;
+esac
