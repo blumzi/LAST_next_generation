@@ -14,6 +14,9 @@ from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 import time
 import asyncio
+import os
+import signal
+
 class ReadyMode(Enum):
     Ready = 1
     Routed = 2
@@ -104,23 +107,23 @@ class Driver(DriverInterface):
         self.socket.bind(self.local_socket_path)
         self.current_request_id = 0
 
-        cmd=f"FROM_PYTHON_LIPP=1 last-matlab -nodisplay -nosplash -batch \"obs.api.Lipp('EquipmentName', '{equipment.name.lower()}'"
+        self.cmd=f"FROM_PYTHON_LIPP=1 exec last-matlab -nodisplay -nosplash -batch \"obs.api.Lipp('EquipmentName', '{equipment.name.lower()}'"
         if equipment_id != 0:
-            cmd += f", 'EquipmentId', {equipment_id}"
-        cmd += ').loop();"'
-        self.logger.info(f'Spawning "{cmd}"')
-        self.driver_process = Popen(args=cmd, stderr=DEVNULL, shell=True)
+            self.cmd += f", 'EquipmentId', {equipment_id}"
+        self.cmd += ').loop();"'
+        self.logger.info(f'Spawning "{self.cmd}"')
+        self.driver_process = Popen(args=self.cmd, stderr=DEVNULL, shell=True, preexec_fn=os.setpgrp)
 
         self._responding = False
         self._last_response = None
         
         self._waiter_for_ready_thread = threading.Thread(name=f"{self.equip + '-wait-for-ready-thread'}", target=self.wait_for_ready).start()
-        self._process_monitor_thread = threading.Thread(name=f"{self.equip + '-monitor-thread'}", target=self.process_monitor).start()
+        self._process_monitor_thread  = threading.Thread(name=f"{self.equip + '-monitor-thread'}",        target=self.process_monitor).start()
 
     def process_monitor(self):
         """
         Monitors the LIPP (MATLAB) process for this driver
-        - Idea: maybe it will restart dead processes (frequent restart handling ?!?)
+        - Idea: maybe it will restart dead processes using self.cmd (frequent restart handling ?!?)
         """
         while not self._terminating:
             if self.driver_process is not None:  # still alive
@@ -133,24 +136,35 @@ class Driver(DriverInterface):
             time.sleep(5)
 
     def wait_for_ready(self):
-        self.logger.info(f"waiting for ready packet ...")
-        ready_packet = self.receive()
+        self.logger.info(f"wait_for_ready: started")
+        while not self._terminating:
+            ready_packet = self.receive()
 
-        if ready_packet is None:
-            self._responding = False
-            self._detected = False
-        else:
-            self.socket.settimeout(self._receive_timeout) # from now on responses should come faster
-            reason = f"MATLAB driver reports '{self.equip} is "
-            if ready_packet['Value'] == "not-detected":
-                reason += "'not-detected'"
-                self.logger.info('wait_for_ready: ' + reason)
-                self._reason = reason
+            if ready_packet is None:
+                self._responding = False
                 self._detected = False
-            elif ready_packet['Value'] == "detected":
-                self._reason = None
-                self.logger.info("wait_for_ready: 'detected'")
-                self._detected = True
+            else:
+                self.socket.settimeout(self._receive_timeout) # from now on responses should come faster
+                reason = f"MATLAB driver reports '{self.equip} is "
+                if ready_packet['Value'] == "not-detected":
+                    reason += "'not-detected'"
+                    self.logger.info('wait_for_ready: ' + reason)
+                    self._reason = reason
+                    self._detected = False
+                elif ready_packet['Value'] == "detected":
+                    self._reason = None
+                    self.logger.info("wait_for_ready: 'detected'")
+                    self._detected = True
+
+        # the driver is terminating (quit() was called)
+        if self.driver_process and self.driver_process.poll() is not None:  # still alive
+            try:
+                self.logger.info(f"process pid={self.driver_process.pid} is still alive, killing it!")
+                os.killpg(self.driver_process.pid, signal.SIGKILL)
+                self.logger.info(f"killed process pid={self.driver_process.pid}")
+            except:
+                pass
+        self.logger.info(f"done")
 
     async def get(self, method: str, **kwargs) -> object:
         await asyncio.sleep(0)
@@ -178,7 +192,10 @@ class Driver(DriverInterface):
             })
 
         response = self.receive()
-        return response['Value'] if 'Value' in response else None
+        if response and 'Value' in response:
+            return response['Value']
+        else:
+            return None
     
     async def put(self, method: str, **kwargs) -> object:
         await asyncio.sleep(0)
@@ -266,8 +283,9 @@ class Driver(DriverInterface):
     
     async def quit(self):
         self._terminating = True # tell the process monitor threads to die
-        self.logger.info(f"quit: Sending method='quit' to pid={self.driver_process.pid}")
-        await self.get(method='quit')
+        if self._detected:
+            self.logger.info(f"quit: Sending method='quit' to pid={self.driver_process.pid}")
+            await self.get(method='quit')
         self.driver_process.terminate()
     
     def info(self):
