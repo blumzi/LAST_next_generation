@@ -5,6 +5,7 @@ import logging
 from subprocess import Popen
 from utils import RepeatTimer, jsonResponse
 import lipp
+import os
 
 subprocesses = list()
 
@@ -141,6 +142,7 @@ class Unit(Activities):
         for driver in [*focusers, *cameras, *mounts]:
             if isinstance(driver, lipp.Driver):
                 await driver.quit()
+        os.system("pkill -f 'obs.api.Lipp.*\.loop()'")  
 
 
 unit = Unit()
