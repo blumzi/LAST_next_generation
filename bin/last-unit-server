@@ -7,8 +7,9 @@ trap kill_unit_server SIGINT SIGHUP
 function kill_unit_server() {
     wget -O /dev/null -o /dev/null http://127.0.0.1:8000/shutdown &
     sleep 2
-    pkill -9 -f "python3 unit/unit-server.py"
-    pkill -9 -f obs.api.Lipp
+    pkill -f 'python3 unit/unit-server.py'
+    pkill -f 'obs.api.ApiBase.makeAuxiliaryFiles'
+    pkill -f 'obs.api.Lipp.*\.loop'
 }
 
 function usage() {
@@ -23,6 +24,7 @@ case "${1}" in
         cd /home/ocs/python/LAST_next_generation
         source .venv/bin/activate
         python3 unit/unit-server.py
+        exit 0
         ;;
 
     stop)
