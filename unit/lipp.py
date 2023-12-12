@@ -136,24 +136,21 @@ class Driver(DriverInterface):
             time.sleep(5)
 
     def wait_for_ready(self):
-        self.logger.info(f"wait_for_ready: started")
+        self.logger.info("started")
         while not self._terminating:
-            ready_packet = self.receive()
+            ready_packet = self.receive() # returns after timeout
 
             if ready_packet is None:
                 self._responding = False
                 self._detected = False
             else:
+                self._responding = True
                 self.socket.settimeout(self._receive_timeout) # from now on responses should come faster
-                reason = f"MATLAB driver reports '{self.equip} is "
                 if ready_packet['Value'] == "not-detected":
-                    reason += "'not-detected'"
-                    self.logger.info('wait_for_ready: ' + reason)
-                    self._reason = reason
+                    self.logger.info("not-detected")
                     self._detected = False
                 elif ready_packet['Value'] == "detected":
-                    self._reason = None
-                    self.logger.info("wait_for_ready: 'detected'")
+                    self.logger.info("detected")
                     self._detected = True
 
         # the driver is terminating (quit() was called)
@@ -162,17 +159,20 @@ class Driver(DriverInterface):
                 self.logger.info(f"process pid={self.driver_process.pid} is still alive, killing it!")
                 os.killpg(self.driver_process.pid, signal.SIGKILL)
                 self.logger.info(f"killed process pid={self.driver_process.pid}")
-            except:
+            except ProcessLookupError:
                 pass
-        self.logger.info(f"done")
+            except Exception as ex:
+                self.logger.exception(f"Could not killpg pid={self.driver_process.pid}", ex)
+
+        self.logger.info("done")
 
     async def get(self, method: str, **kwargs) -> object:
         await asyncio.sleep(0)
 
-        # if not self.detected:
-        #     return JSONResponse({
-        #     'Error': f"Device '{self.equip}' not-detected, state={self._state}, reason={self._reason}",
-        # })
+        if not self.detected:
+            return JSONResponse({
+            'Error': f"Device '{self.equip}' not-detected",
+        })
         
         request = Request()
         self.current_request_id += 1
@@ -200,10 +200,10 @@ class Driver(DriverInterface):
     async def put(self, method: str, **kwargs) -> object:
         await asyncio.sleep(0)
 
-        # if not self.detected:
-        #     return return JSONResponse({
-        #     'Error': f"Device '{self.equip}' not-detected, state={self._state}, reason={self._reason}",
-        # })
+        if not self.detected:
+            return JSONResponse({
+            'Error': f"Device '{self.equip}' not-detected",
+        })
         
         request = Request()
         self.current_request_id += 1
@@ -309,18 +309,6 @@ class Driver(DriverInterface):
     @property
     def last_response(self):
         return self._last_response
-
-
-class DeviceUnavailable(BaseModel):
-    reason: str
-
-    def __init__(self, reason: str):
-        self.reason = reason
-
-    def __await__(self):
-        return {
-            'Error': f"Device not available (reason={self.reason})"
-        }
     
 if __name__ == '__main__':
     driver = Driver(equipment=Equipment.Test, equipment_id=3)
