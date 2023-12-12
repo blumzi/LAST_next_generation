@@ -34,10 +34,21 @@ else:
 
 from server.routers import focuser, camera, mount, pswitch
 
+def end_lifespan():
+    logger.info("ending lifespan")
+    unit.unit.quit()
+
+@asynccontextmanager
+async def lifespan(fast_app: FastAPI):
+    pass
+    yield
+    end_lifespan
+
 app = FastAPI(
     title=f'LAST Unit Api server on {gethostname()}',
     docs_url='/docs',
     redocs_url='/redocs',
+    lifespan=lifespan,
     openapi_url='/openapi.json')
 
 app.include_router(pswitch.router)
@@ -48,6 +59,10 @@ app.include_router(unit.router)
 
 @app.get("/shutdown")
 async def shutdown():
+    """
+    Die gracefully when asked nicely
+    """
+    logger.info(f"shutdown by shutdown query")
     await unit.unit.quit()
     await uvicorn_server.shutdown()
     return {"message": "Server is shutting down"}
