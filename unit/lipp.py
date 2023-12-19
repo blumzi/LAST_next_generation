@@ -1,6 +1,6 @@
 import datetime
 
-from utils import Equipment, equipment_ids, init_log, datetime_decoder, DateTimeEncoder
+from utils import Equipment, equipment_ids, init_log, datetime_decoder, DateTimeEncoder, TriState
 import socket
 from collections import OrderedDict
 import json
@@ -10,7 +10,6 @@ from enum import Enum
 import humanize
 from driver_interface import DriverInterface
 import threading
-from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 import time
 import asyncio
@@ -49,9 +48,12 @@ class Driver(DriverInterface):
     An object that communicates between a LAST Unit and a device-driver for a specific type of LAST equipment
     using the LIPP (LAST Inter Process Protocol) protocol
     """
-    socket: socket
+    socket: socket              # for communication with the matlab Lipp
+    probing_socket: socket      # for periodical probes of the device
+
     local_socket_path: str
     peer_socket_path: str
+    probing_socket_path: str
     current_request_id: int
     _max_bytes = 64 * 1024
     driver_process = None
@@ -61,13 +63,16 @@ class Driver(DriverInterface):
     equipment_id: int
     equip: str
     _info: dict
-    _responding: bool = False
+    _responding: TriState = None
     _last_response: datetime.datetime = None
     _receive_timeout = 5 # seconds
     _ready_timeout = 30 # be patient, matlab needs to come up
     _waiter_for_ready_thread: threading.Thread
     _process_monitor_thread: threading.Thread
     _terminating = False
+
+    _last_answer_to_probe: datetime.datetime = None
+    _answers_to_probe: TriState = None
 
 
     def __init__(self, drivers_list: list, equipment: Equipment, equipment_id: int = 0):
@@ -102,23 +107,30 @@ class Driver(DriverInterface):
         self.local_socket_path = f'\0lipp-unit-{self.equip}'
         self.peer_socket_path = self.local_socket_path.replace('unit', 'driver')
 
+        # A socket used for communications with the MATLAB Lipp
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.socket.settimeout(self._ready_timeout)
         self.socket.bind(self.local_socket_path)
         self.current_request_id = 0
+
+        # A socket to receive the results of periodical device probes
+        self.probing_socket_path = self.local_socket_path + '-probing'
+        self.probing_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self.probing_socket.bind(self.probing_socket_path)
 
         self.cmd=f"FROM_PYTHON_LIPP=1 exec last-matlab -nodisplay -nosplash -batch \"obs.api.Lipp('EquipmentName', '{equipment.name.lower()}'"
         if equipment_id != 0:
             self.cmd += f", 'EquipmentId', {equipment_id}"
         self.cmd += ').loop();"'
         self.logger.info(f'Spawning "{self.cmd}"')
-        self.driver_process = Popen(args=self.cmd, stderr=DEVNULL, shell=True, preexec_fn=os.setpgrp)
+        self.driver_process = Popen(args=self.cmd, shell=True, preexec_fn=os.setpgrp)
 
         self._responding = False
         self._last_response = None
         
         self._waiter_for_ready_thread = threading.Thread(name=f"{self.equip + '-wait-for-ready-thread'}", target=self.wait_for_ready).start()
         self._process_monitor_thread  = threading.Thread(name=f"{self.equip + '-monitor-thread'}",        target=self.process_monitor).start()
+        self._probing_monitor_thread  = threading.Thread(name=f"{self.equip + '-probing-monitor-thread'}",target=self.monitor_device_probing).start()
 
     def process_monitor(self):
         """
@@ -134,6 +146,11 @@ class Driver(DriverInterface):
             else:
                 self._info['ProcessId'] = None
             time.sleep(5)
+
+    def monitor_device_probing(self):
+        while not self._terminating:
+            self.receive_probing() # blocking
+
 
     def wait_for_ready(self):
         self.logger.info("started")
@@ -226,8 +243,24 @@ class Driver(DriverInterface):
         response = self.receive()
         return response['Value']
 
+    def receive_probing(self):
+        try:
+            data, address = self.probing_socket.recvfrom(self._max_bytes)
+        except Exception as ex:
+            self.logger.exception(f"While recvfrom probing_socket", exc_info=ex)
+            return
+        
+        self.logger.info(f"got '{data}' from '{address}")
+        response = json.loads(data.decode(), object_hook=datetime_decoder)
+        if not 'AnswersToProbe' in response:
+            self.logger.error(f"Missing 'AnswersToProbe' field in received '{data}'")
+            return
+        self._answers_to_probe = response['AnswersToProbe']
+        self._last_answer_to_probe = datetime.datetime.now()
+        
+
+
     def receive(self):
-        label = "lipp.receive: "
         try:
             data, address = self.socket.recvfrom(self._max_bytes)
             self._responding = True
@@ -237,14 +270,14 @@ class Driver(DriverInterface):
             self._responding = False
             return None
 
-        self.logger.info(label + f"got '{data}' from '{address}")
+        self.logger.info(f"got '{data}' from '{address}")
         response = json.loads(data.decode(), object_hook=datetime_decoder)
 
         if 'Error' in response and response['Error'] is not None:
-            self.logger.error(label + f"remote Error=\'{response['Error']}\'")
+            self.logger.error(f"remote Error=\'{response['Error']}\'")
 
         elif 'Exception' in response and response['Exception'] is not None:
-            self.logger.error(label + "remote (MATLAB) Exception:")
+            self.logger.error("remote (MATLAB) Exception:")
             ex = response['Exception']
             self.logger.error(f"remote   Exception: {ex['identifier']}")
             self.logger.error(f"remote     Message: {ex['message']}")
@@ -268,7 +301,7 @@ class Driver(DriverInterface):
             rx['Received'] = datetime.datetime.now()
             rx_duration: datetime.timedelta = (rx['Received'] - rx['Sent'])
             elapsed = rx['Received'] - tx['Sent']
-            self.logger.info(label + f", Timing: elapsed: {humanize.precisedelta(elapsed, minimum_unit='microseconds')}, " +
+            self.logger.info(f", Timing: elapsed: {humanize.precisedelta(elapsed, minimum_unit='microseconds')}, " +
                     f"request: {humanize.precisedelta(tx_duration, minimum_unit='microseconds')}, " + 
                     f"response: {humanize.precisedelta(rx_duration, minimum_unit='microseconds')}")
 
@@ -292,7 +325,10 @@ class Driver(DriverInterface):
         return self._info
     
     def status(self):
-        pass
+        return {
+            'AnswersToProbe': self._answers_to_probe,
+            'LastAnswerToProbe': self._last_answer_to_probe,
+        }
     
     @property
     def detected(self) -> bool:
