@@ -1,7 +1,7 @@
 import httpx
 import socket
 import logging
-from utils import Equipment, init_log, LAST_API_ROOT
+from utils import Equipment, init_log, LAST_API_ROOT, TriState
 from urllib.parse import urlencode
 from driver_interface import DriverInterface
 from fastapi.responses import JSONResponse
@@ -16,7 +16,7 @@ class Forwarder(DriverInterface):
     equip_id: int
     _reason: str = None
     _info: dict
-    _responding: bool = False;
+    _responding: TriState = None;
     _last_response: datetime.datetime = None
 
     def __init__(self, address: str, port: int = -1, equipment: Equipment = Equipment.Undefined, equip_id: int = 0) -> None:
@@ -74,6 +74,7 @@ class Forwarder(DriverInterface):
                 self._responding = True
                 self._last_response = datetime.datetime.now()
                 response.raise_for_status()
+                self._detected = True # there was no exception -> we are detected
             except Exception as ex:
                 self._detected = False
                 self._responding = False
@@ -83,7 +84,6 @@ class Forwarder(DriverInterface):
                 })
             
             if response.is_success:
-                self._detected = True
                 return response.content
     
 
@@ -97,6 +97,7 @@ class Forwarder(DriverInterface):
             try:
                 response = await client.put(url, timeout=timeout, follow_redirects=False)
                 response.raise_for_status()
+                self._detected = True
             except Exception as ex:
                 self._detected = False
                 self.logger.error(f"HTTP error ({ex.args[0]})")
@@ -105,7 +106,6 @@ class Forwarder(DriverInterface):
                 })
             
             if response.is_success:
-                self._detected = True
                 return response.content
             
             
@@ -113,7 +113,10 @@ class Forwarder(DriverInterface):
         return self._info
     
     def status(self):
-        pass
+        return {
+            'responding': self._responding,
+            'last_response': self._last_response,
+        }
     
     @property
     def detected(self) -> bool:
