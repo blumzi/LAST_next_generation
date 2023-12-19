@@ -28,9 +28,11 @@ class Activities:
     def is_active(self, activity: IntFlag):
         return self._activities & activity != Idle
 
-    def is_idle(self):
+    @property
+    def is_idle(self) -> bool:
         return self._activities == Idle
     
+    @property
     def activities(self) -> IntFlag:
         return self._activities
         
