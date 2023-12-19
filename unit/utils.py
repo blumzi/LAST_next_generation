@@ -4,12 +4,15 @@ import platform
 import os
 import datetime
 import json
-from typing import Any
+from typing import Any, Optional
 from threading import Timer, Event
+from datetime import timedelta
 
-from json import JSONEncoder, JSONDecoder
+from json import JSONEncoder
 from starlette.responses import Response
 import fastapi.responses
+
+TriState = Optional[bool]  # either True, False or None
 
 default_log_level = logging.DEBUG
 default_encoding = "utf-8"
@@ -29,21 +32,6 @@ equipment_ids = {
     "w": [3, 4],
 }
 
-class ValidEquipId(int, Enum):
-    one = '1',
-    two = '2',
-    three = '3',
-    four = '4',
-
-class ValidPswitchId(int, Enum):
-    one = '1',
-    two = '2',
-
-class ValidCoordType(str, Enum):
-    eq = 'eq',
-    hor = 'hor',
-    ha = 'ha',
-    azalt = 'azalt'
 
 class PathMaker:
     top_folder: str
@@ -222,8 +210,9 @@ class ResponseDict(dict):
 
 
 class RepeatTimer(Timer):
-    def __init__(self, interval, function):
+    def __init__(self, name, interval, function):
         super(RepeatTimer, self).__init__(interval=interval, function=function)
+        self.name = name
         self.interval = interval
         self.function = function
         self.stopped = Event()
@@ -239,3 +228,28 @@ class RepeatTimer(Timer):
 def jsonResponse(obj: object) -> str:
     pretty_json = json.dumps(obj, indent=2, default=str)
     return fastapi.responses.JSONResponse(content=json.loads(pretty_json), media_type="aplication/json")
+
+# class Cached():
+#     _value = None
+#     _getter: callable
+#     _max_age: datetime.timedelta
+#     _last_get: datetime.datetime
+
+#     def __init__(self, max_age: timedelta = None, getter: callable = None):
+#         if max_age is None:
+#             raise Exception(f"Missing 'max_age' parameter")
+        
+#         if getter is None:
+#             raise Exception(f"Missing 'getter' parameter")
+        
+#         self._max_age = max_age
+#         self._getter = getter
+#         self._value = self._getter()
+#         self._last_get = datetime.datetime.now()
+
+#     @property
+#     def value(self, immediate=False):       
+#         if immediate or (datetime.datetime.now() - self._last_get) >= self._max_age:
+#             self._value = self._getter()
+#             self._last_get = datetime.datetime.now()
+#         return self._value
