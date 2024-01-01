@@ -3,13 +3,14 @@
 #  - by the MATLAB code in 'obs.api.Wrapper.makeFastApiRoutes()'
 #  - derived from the MATLAB class in '/home/ocs/matlab/LAST/LAST_XerxesMount/+inst/@XerxesMountBinary/XerxesMountBinary.m'
 #  - for the 'mount' type of LAST equipment
-#  - on 06-Dec-2023 12:34:55
+#  - on 01-Jan-2024 14:47:27
 #
 # Manual changes will be overridden!
 #
 
 from fastapi import APIRouter, Request
-from utils import LAST_API_ROOT, PrettyJSONResponse, equipment_ids, Equipment, default_port, init_log, ValidEquipId
+from utils import LAST_API_ROOT, PrettyJSONResponse, equipment_ids, Equipment, default_port, init_log
+from validations import ValidEquipId
 import socket
 from forwarder import Forwarder
 import logging
