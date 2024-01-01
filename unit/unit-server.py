@@ -1,6 +1,5 @@
 import uvicorn
 from fastapi import FastAPI
-import unit
 from utils import init_log # , PrettyJSONResponse, HelpResponse, quote, Subsystem
 from contextlib import asynccontextmanager
 from socket import gethostname
@@ -32,6 +31,7 @@ else:
     exit(routers_maker.returncode)
 
 
+import unit
 from server.routers import focuser, camera, mount, pswitch
 
 def end_lifespan():
