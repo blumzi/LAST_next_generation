@@ -70,6 +70,6 @@ async def shutdown():
 uvicorn_server = None
 
 if __name__ == "__main__":
-    config = uvicorn.Config(app=app, host="127.0.0.1", port=8000)
+    config = uvicorn.Config(app=app, host="0.0.0.0", port=8000)
     uvicorn_server = uvicorn.Server(config=config)
     uvicorn_server.run()
