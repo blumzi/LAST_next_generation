@@ -6,6 +6,7 @@ from urllib.parse import urlencode
 from driver_interface import DriverInterface
 from fastapi.responses import JSONResponse
 import datetime
+import json
 
 class Forwarder(DriverInterface):
     remote_address: str = None
@@ -67,15 +68,15 @@ class Forwarder(DriverInterface):
             url += "?" + urlencode(kwargs)
         self.logger.info(f"forwarding get(url='{url}')")
         
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(trust_env=False) as client: #  must have trust_env=False, otherwise it uses the proxy
             timeout = 5
             try:
                 response = await client.get(url, timeout=timeout, follow_redirects=False)
+                response.raise_for_status()
                 self._responding = True
                 self._last_response = datetime.datetime.now()
-                response.raise_for_status()
                 self._detected = True # there was no exception -> we are detected
-            except Exception as ex:
+            except httpx.HTTPStatusError as ex:
                 self._detected = False
                 self._responding = False
                 self.logger.error(f"HTTP error ({ex.args[0]})")
@@ -84,7 +85,8 @@ class Forwarder(DriverInterface):
                 })
             
             if response.is_success:
-                return response.content
+                data = json.loads(response.content)
+                return JSONResponse(content=data)
     
 
     async def put(self, method: str, **kwargs) -> dict:
@@ -106,7 +108,8 @@ class Forwarder(DriverInterface):
                 })
             
             if response.is_success:
-                return response.content
+                data = json.loads(response.content)
+                return JSONResponse(content=data)
             
             
     def info(self):
