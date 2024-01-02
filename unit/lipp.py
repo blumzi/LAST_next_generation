@@ -157,10 +157,7 @@ class Driver(DriverInterface):
         while not self._terminating:
             ready_packet = self.receive() # returns after timeout
 
-            if ready_packet is None:
-                self._responding = False
-                self._detected = False
-            else:
+            if ready_packet is not None:
                 self._responding = True
                 self.socket.settimeout(self._receive_timeout) # from now on responses should come faster
                 if ready_packet['Value'] == "not-detected":
@@ -266,7 +263,7 @@ class Driver(DriverInterface):
             self._responding = True
             self._last_response = datetime.datetime.now()
         except socket.timeout as ex:
-            self.logger.error(f"Timeout ({self.socket.gettimeout()} sec.) while recvfrom on '{self.peer_socket_path[1:]}'")
+            # self.logger.error(f"Timeout ({self.socket.gettimeout()} sec.) while recvfrom on '{self.peer_socket_path[1:]}'")
             self._responding = False
             return None
 
