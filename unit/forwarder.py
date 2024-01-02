@@ -94,7 +94,7 @@ class Forwarder(DriverInterface):
         if kwargs != {}:
             url += "?" + urlencode(kwargs)
         self.logger.info(f"forwarding get(url='{url}')")
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(trust_env=False) as client: #  must have trust_env=False, otherwise it uses the proxy
             timeout = 5
             try:
                 response = await client.put(url, timeout=timeout, follow_redirects=False)
