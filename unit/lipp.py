@@ -153,9 +153,15 @@ class Driver(DriverInterface):
 
 
     def wait_for_ready(self):
+        """
+        Waits for a 'ready' packet on the main socket.  This packet will (eventually) arrive when the
+         spawned MATLAB process comes-to-life and tries a "Connected = true" on the underlying driver.
+
+        The reply is either 'detected' or 'not-detected' according to whether the driver found its configured hardware.
+        """
         self.logger.info("started")
         while not self._terminating:
-            ready_packet = self.receive() # returns after timeout
+            ready_packet = self.receive() # on timeout returns a None ready_packet
 
             if ready_packet is not None:
                 self._responding = True
@@ -166,17 +172,18 @@ class Driver(DriverInterface):
                 elif ready_packet['Value'] == "detected":
                     self.logger.info("detected")
                     self._detected = True
+                return
 
-        # the driver is terminating (quit() was called)
-        if self.driver_process and self.driver_process.poll() is not None:  # still alive
-            try:
-                self.logger.info(f"process pid={self.driver_process.pid} is still alive, killing it!")
-                os.killpg(self.driver_process.pid, signal.SIGKILL)
-                self.logger.info(f"killed process pid={self.driver_process.pid}")
-            except ProcessLookupError:
-                pass
-            except Exception as ex:
-                self.logger.exception(f"Could not killpg pid={self.driver_process.pid}", ex)
+        if self._terminating:
+            if self.driver_process and self.driver_process.poll() is not None:  # still alive
+                try:
+                    self.logger.info(f"process pid={self.driver_process.pid} is still alive, killing it!")
+                    os.killpg(self.driver_process.pid, signal.SIGKILL)
+                    self.logger.info(f"killed process pid={self.driver_process.pid}")
+                except ProcessLookupError:
+                    pass
+                except Exception as ex:
+                    self.logger.exception(f"Could not killpg pid={self.driver_process.pid}", ex)
 
         self.logger.info("done")
 
@@ -207,7 +214,7 @@ class Driver(DriverInterface):
 
         response = self.receive()
         if response and 'Value' in response:
-            return response['Value']
+            return JSONResponse(response['Value'])
         else:
             return None
     
@@ -238,7 +245,7 @@ class Driver(DriverInterface):
         })
 
         response = self.receive()
-        return response['Value']
+        return JSONResponse(response['Value'])
 
     def receive_probing(self):
         try:
