@@ -1,6 +1,6 @@
 import datetime
 
-from utils import Equipment, equipment_ids, init_log, datetime_decoder, DateTimeEncoder, TriState
+from utils import Equipment, equipment_ids, init_log, datetime_decoder, DateTimeEncoder, TriState, LockWithTimeout
 import socket
 from collections import OrderedDict
 import json
@@ -59,9 +59,9 @@ class Driver(DriverInterface):
     driver_process = None
     pending_request: Request
     _reason: str = None
-    equipment: Equipment
+    equipment_type: Equipment
     equipment_id: int
-    equip: str
+    equipment_type_and_id: str
     _info: dict
     _responding: TriState = None
     _last_response: datetime.datetime = None
@@ -74,18 +74,21 @@ class Driver(DriverInterface):
     _last_answer_to_probe: datetime.datetime = None
     _answers_to_probe: TriState = None
 
+    lock: threading.Lock
+    should_monitor_driver_process: bool = False
+
 
     def __init__(self, drivers_list: list, equipment: Equipment, equipment_id: int = 0):
 
         drivers_list[equipment_id] = self
 
-        self.equipment = equipment
-        self.equip = self.equipment.name.lower()
+        self.equipment_type = equipment
+        self.equipment_type_and_id = self.equipment_type.name.lower()
         if equipment_id in range(1,5):
             self.equipment_id = equipment_id
-            self.equip += f'-{self.equipment_id}'
+            self.equipment_type_and_id += f'-{self.equipment_id}'
             
-        self.logger = logging.getLogger(f'lipp-unit-{self.equip}')
+        self.logger = logging.getLogger(f'lipp-unit-{self.equipment_type_and_id}')
         init_log(self.logger)
 
         hostname = socket.gethostname()
@@ -101,10 +104,10 @@ class Driver(DriverInterface):
         
         self._info = {
             'Type': 'LIPP',
-            'Equipment': self.equip,
+            'Equipment': self.equipment_type_and_id,
         }
 
-        self.local_socket_path = f'\0lipp-unit-{self.equip}'
+        self.local_socket_path = f'\0lipp-unit-{self.equipment_type_and_id}'
         self.peer_socket_path = self.local_socket_path.replace('unit', 'driver')
 
         # A socket used for communications with the MATLAB Lipp
@@ -122,23 +125,41 @@ class Driver(DriverInterface):
         if equipment_id != 0:
             self.cmd += f", 'EquipmentId', {equipment_id}"
         self.cmd += ').loop();"'
-        self.logger.info(f'Spawning "{self.cmd}"')
+        self.start_driver_process(reason='first-time')
+
+        self.lock = threading.Lock()
+
+    def start_driver_process(self, reason: str):
+        self.logger.info(f">>> Starting driver process, reason='{reason}', cmd='{self.cmd}'")
         self.driver_process = Popen(args=self.cmd, shell=True, preexec_fn=os.setpgrp)
+        self.should_monitor_driver_process = True
 
         self._responding = False
         self._last_response = None
         
-        self._waiter_for_ready_thread = threading.Thread(name=f"{self.equip + '-wait-for-ready-thread'}", target=self.wait_for_ready).start()
-        self._process_monitor_thread  = threading.Thread(name=f"{self.equip + '-monitor-thread'}",        target=self.process_monitor).start()
-        self._probing_monitor_thread  = threading.Thread(name=f"{self.equip + '-probing-monitor-thread'}",target=self.monitor_device_probing).start()
+        self._waiter_for_ready_thread = threading.Thread(name=f"{self.equipment_type_and_id + '-wait-for-ready-thread'}",           target=self.wait_for_ready).start()
+        self._process_monitor_thread  = threading.Thread(name=f"{self.equipment_type_and_id + '-monitor-driver-process-thread'}",   target=self.monitor_driver_process).start()
+        self._probing_monitor_thread  = threading.Thread(name=f"{self.equipment_type_and_id + '-monitor-device-probing-thread'}",   target=self.monitor_device_probing).start()
 
-    def process_monitor(self):
+    def end_driver_process(self, reason: str):
+        self.logger.info(f">>> Ending driver process, reason='{reason}'")
+        self._terminating = True  # tells threads to die
+        self.driver_process.terminate()
+        self.driver_process = None
+        self.should_monitor_driver_process = False
+
+    def restart_driver_process(self, reason: str):
+        self.logger.info(f">>> Restarting driver process, reason='{reason}'")
+        self.end_driver_process(reason=reason)
+        self.start_driver_process(reason=reason)
+
+    def monitor_driver_process(self):
         """
         Monitors the LIPP (MATLAB) process for this driver
         - Idea: maybe it will restart dead processes using self.cmd (frequent restart handling ?!?)
         """
         while not self._terminating:
-            if self.driver_process is not None:  # still alive
+            if self.should_monitor_driver_process and self.driver_process is not None:  # still alive
                 if self.driver_process.poll() is None:
                     self._info['ProcessId'] = self.driver_process.pid
                 else:
@@ -161,7 +182,7 @@ class Driver(DriverInterface):
         """
         self.logger.info("started")
         while not self._terminating:
-            ready_packet = self.receive() # on timeout returns a None ready_packet
+            ready_packet = self.receive_from_driver() # on timeout returns a None ready_packet
 
             if ready_packet is not None:
                 self._responding = True
@@ -189,41 +210,18 @@ class Driver(DriverInterface):
 
     async def get(self, method: str, **kwargs) -> object:
         await asyncio.sleep(0)
-
-        if not self.detected:
-            return JSONResponse({
-            'Error': f"Device '{self.equip}' not-detected",
-        })
-        
-        request = Request()
-        self.current_request_id += 1
-        request.RequestId = self.current_request_id
-        request.Method = method
-        request.Parameters = {}
-        for k, v in kwargs.items():
-            request.Parameters[k] = v
-        request.RequestTime = datetime.datetime.now()
-        data = json.dumps(request.__dict__, cls=DateTimeEncoder).encode()
-        self.pending_request = request
-        try:
-            self.socket.sendto(data, self.peer_socket_path)
-        except ConnectionRefusedError:
-            return  JSONResponse({
-                'Error': f"LIPP connection to '{self.peer_socket_path[1:]}' refused",
-            })
-
-        response = self.receive()
-        if response and 'Value' in response:
-            return JSONResponse(response['Value'])
-        else:
-            return None
+        return self.get_or_put(method, kwargs)
     
     async def put(self, method: str, **kwargs) -> object:
+        await asyncio.sleep(0)
+        return self.get_or_put(method, kwargs)
+
+    async def get_or_put(self, method: str, **kwargs) -> object:
         await asyncio.sleep(0)
 
         if not self.detected:
             return JSONResponse({
-            'Error': f"Device '{self.equip}' not-detected",
+            'Error': f"Device '{self.equipment_type_and_id}' not-detected",
         })
         
         request = Request()
@@ -236,16 +234,27 @@ class Driver(DriverInterface):
         request.RequestTime = datetime.datetime.now()
         data = json.dumps(request.__dict__, cls=DateTimeEncoder).encode()
         self.pending_request = request
-        try:
-            self.socket.sendto(data, self.peer_socket_path)
-        except ConnectionRefusedError:
-            self._responding = False
-            return JSONResponse({
-            'Error': f"LIPP connection to '{self.peer_socket_path[1:]}' refused",
-        })
+        
+        acquired = self.lock.acquire(timeout=10)
+        if acquired:
+            try:
+                self.socket.sendto(data, self.peer_socket_path)
+            except ConnectionRefusedError:
+                self._responding = False
+                self.lock.release()
+                return JSONResponse({
+                'Error': f"LIPP connection to '{self.peer_socket_path[1:]}' refused",
+            })
 
-        response = self.receive()
-        return JSONResponse(response['Value'])
+            response = self.receive_from_driver()
+            self.lock.release()
+        else:
+            # did not acquire the lock within 10 seconds, kill the Lipper!
+            # self.restart_driver_process(reason=f"did not acquire lock within {10} seconds, pending request={self.pending_request.__dict__}")
+            pass
+
+        return JSONResponse(response['Value']) if response and 'Value' in response else None
+    
 
     def receive_probing(self):
         try:
@@ -264,7 +273,7 @@ class Driver(DriverInterface):
         
 
 
-    def receive(self):
+    def receive_from_driver(self):
         try:
             data, address = self.socket.recvfrom(self._max_bytes)
             self._responding = True
@@ -312,18 +321,16 @@ class Driver(DriverInterface):
         return response
 
     def __del__(self):
-        if self.driver_process:
-            self.driver_process.terminate()
+        self.end_driver_process(reason='destructor')
         if self.socket:
             self.socket.close()
         return self._reason
     
     async def quit(self):
-        self._terminating = True # tell the process monitor threads to die
         if self._detected:
             self.logger.info(f"quit: Sending method='quit' to pid={self.driver_process.pid}")
             await self.get(method='quit')
-        self.driver_process.terminate()
+        self.end_driver_process(reason='quit')
     
     def info(self):
         return self._info
@@ -353,7 +360,7 @@ class Driver(DriverInterface):
 if __name__ == '__main__':
     driver = Driver(equipment=Equipment.Test, equipment_id=3)
 
-    ready_packet = driver.receive()
+    ready_packet = driver.receive_from_driver()
     driver.logger.info(f"received ready packet with mode={ready_packet.mode}")
 
     if ready_packet['Value'] == "ready":
