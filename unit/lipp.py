@@ -1,6 +1,6 @@
 import datetime
 
-from utils import Equipment, equipment_ids, init_log, datetime_decoder, DateTimeEncoder, TriState, LockWithTimeout
+from utils import Equipment, equipment_ids, init_log, datetime_decoder, DateTimeEncoder, TriState
 import socket
 from collections import OrderedDict
 import json
