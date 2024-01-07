@@ -1,6 +1,6 @@
 import datetime
 
-from utils import Equipment, equipment_ids, init_log, datetime_decoder, DateTimeEncoder, TriState, LockWithTimeout
+from utils import Equipment, equipment_ids, init_log, datetime_decoder, DateTimeEncoder, TriState
 import socket
 from collections import OrderedDict
 import json
@@ -210,14 +210,13 @@ class Driver(DriverInterface):
 
     async def get(self, method: str, **kwargs) -> object:
         await asyncio.sleep(0)
-        return self.get_or_put(method, kwargs)
+        return self.get_or_put(method, **kwargs)
     
     async def put(self, method: str, **kwargs) -> object:
         await asyncio.sleep(0)
-        return self.get_or_put(method, kwargs)
+        return self.get_or_put(method, **kwargs)
 
-    async def get_or_put(self, method: str, **kwargs) -> object:
-        await asyncio.sleep(0)
+    def get_or_put(self, method: str, **kwargs) -> object:
 
         if not self.detected:
             return JSONResponse({
@@ -253,7 +252,8 @@ class Driver(DriverInterface):
             # self.restart_driver_process(reason=f"did not acquire lock within {10} seconds, pending request={self.pending_request.__dict__}")
             pass
 
-        return JSONResponse(response['Value']) if response and 'Value' in response else None
+        # return JSONResponse(response['Value']) if response and 'Value' in response else None
+        return JSONResponse(response['Value'] if response and 'Value' in response else None)
     
 
     def receive_probing(self):
