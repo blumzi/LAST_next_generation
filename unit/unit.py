@@ -168,7 +168,8 @@ class Unit(Activities):
 
     async def quit(self):
         logger.info("Quiting")
-        self.timer.stop()
+        if self.timer is not None:
+            self.timer.stop()
         for driver in [*focusers, *cameras, *mounts]:
             if isinstance(driver, lipp.Driver):
                 await driver.quit()
