@@ -144,7 +144,8 @@ class Driver(DriverInterface):
     def end_driver_process(self, reason: str):
         self.logger.info(f">>> Ending driver process, reason='{reason}'")
         self._terminating = True  # tells threads to die
-        self.driver_process.terminate()
+        if self.driver_process is not None:
+            self.driver_process.terminate()
         self.driver_process = None
         self.should_monitor_driver_process = False
 
