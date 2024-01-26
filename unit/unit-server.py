@@ -1,10 +1,18 @@
 import uvicorn
 from fastapi import FastAPI
-from utils import init_log # , PrettyJSONResponse, HelpResponse, quote, Subsystem
+from utils import init_log  # , PrettyJSONResponse, HelpResponse, quote, Subsystem
 from contextlib import asynccontextmanager
 from socket import gethostname
 import logging
 from subprocess import Popen
+
+import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).parent.parent))
+
+from unit import unit_quit, unit_router
+from server.routers import focuser, camera, mount, pswitch
 
 logger = logging.getLogger('last-unit-server')
 init_log(logger)
@@ -13,13 +21,11 @@ init_log(logger)
 # First we call the routers maker (MATLAB) which produces a python module file per
 #  each of the classes served by this FastApi server (focuser, camera, mount)
 #
-# We need to wait for it to finish before we can import the respective server.router.<class>
+# We need to wait for it to finish before we can import the respective server.unit_router.<class>
 #  modules
 #
 
-# cmd="NO_STARTUP=1 last-matlab -nodisplay -nosplash -batch 'paths = [\"AstroPack/matlab/base\", \"AstroPack/matlab/util\", \"LAST/LAST_Handle\", \"LAST/LAST_Api\"]; top = fullfile(getenv(\"HOME\"), \"matlab\"); for p = 1:numel(paths); addpath(fullfile(top, paths(p))); end; obs.api.ApiBase.makeAuxiliaryFiles(); exit(0)'"
-
-cmd="last-matlab -nodisplay -nosplash -batch 'obs.api.ApiBase.makeAuxiliaryFiles; exit'"
+cmd = "last-matlab -nodisplay -nosplash -batch 'obs.api.ApiBase.makeAuxiliaryFiles; exit'"
 logger.info(f'calling MATLAB FastApi routers maker with cmd="{cmd}"')
 routers_maker = Popen(args=cmd, shell=True)
 logger.info(f'Waiting for MATLAB FastApi routers maker')
@@ -31,18 +37,16 @@ else:
     exit(routers_maker.returncode)
 
 
-import unit
-from server.routers import focuser, camera, mount, pswitch
-
-def end_lifespan():
+async def end_lifespan():
     logger.info("ending lifespan")
-    unit.unit.quit()
+    await unit_quit()
+
 
 @asynccontextmanager
 async def lifespan(fast_app: FastAPI):
     pass
     yield
-    end_lifespan
+    await end_lifespan()
 
 app = FastAPI(
     title=f'LAST Unit Api server on {gethostname()}',
@@ -55,16 +59,19 @@ app.include_router(pswitch.router)
 app.include_router(focuser.router)
 app.include_router(camera.router)
 app.include_router(mount.router)
-app.include_router(unit.router)
+app.include_router(unit_router)
 
-@app.get("/shutdown")
+
+@app.get("/shutdown", tags=['last-unit-service'])
 async def shutdown():
     """
     Die gracefully when asked nicely
     """
     logger.info(f"shutdown by shutdown query")
-    await unit.unit.quit()
-    await uvicorn_server.shutdown()
+    await unit_quit()
+    uvicorn_server.should_exit = True
+    # await uvicorn_server.shutdown()
+    # raise KeyboardInterrupt
     return {"message": "Server is shutting down"}
 
 uvicorn_server = None
