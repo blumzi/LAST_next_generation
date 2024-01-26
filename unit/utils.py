@@ -17,6 +17,8 @@ TriState = Optional[bool]  # either True, False or None
 default_log_level = logging.DEBUG
 default_encoding = "utf-8"
 default_port = 8000
+Never = datetime.datetime.min
+
 
 class Equipment(Enum):
     Mount = 1,
@@ -57,9 +59,9 @@ class PathMaker:
         return seq
 
     def make_daily_log_folder_name(self):
-        dir = os.path.join(self.top_folder, datetime.datetime.now().strftime('%Y-%m-%d'))
-        os.makedirs(dir, exist_ok=True)
-        return dir
+        directory = os.path.join(self.top_folder, datetime.datetime.now().strftime('%Y-%m-%d'))
+        os.makedirs(directory, exist_ok=True)
+        return directory
     #
     # def make_exposure_file_name(self):
     #     exposures_folder = os.path.join(self.make_daily_folder_name(), 'Exposures')
@@ -158,12 +160,14 @@ def init_log(logger: logging.Logger):
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
+
 class DateTimeEncoder(JSONEncoder):
     def default(self, obj):
         if isinstance(obj, datetime.datetime):
             return obj.isoformat()
         # Let the base class default method raise the TypeError
         return JSONEncoder.default(self, obj)
+
 
 def datetime_decoder(dct):
     for key, value in dct.items():
@@ -173,8 +177,10 @@ def datetime_decoder(dct):
             except ValueError:
                 pass  # Not a datetime string, so we leave it unchanged
     return dct
-    
+
+
 LAST_API_ROOT = '/last/api/v1/'
+
 
 class PrettyJSONResponse(Response):
     media_type = "application/json"
@@ -187,7 +193,8 @@ class PrettyJSONResponse(Response):
             indent=4,
             separators=(", ", ": "),
         ).encode(default_encoding)
-    
+
+
 class ResponseDict(dict):
     """
     Defines a Response dictionary which MUST have at least the keys:
