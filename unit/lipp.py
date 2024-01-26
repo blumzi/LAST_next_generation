@@ -1,11 +1,11 @@
 import datetime
 
-from utils import Equipment, equipment_ids, init_log, datetime_decoder, DateTimeEncoder, TriState
+from utils import Equipment, equipment_ids, init_log, datetime_decoder, DateTimeEncoder, TriState, Never
 import socket
 from collections import OrderedDict
 import json
 import logging
-from subprocess import Popen, DEVNULL
+from subprocess import Popen
 from enum import Enum
 import humanize
 from driver_interface import DriverInterface
@@ -15,6 +15,8 @@ import time
 import asyncio
 import os
 import signal
+from typing import List
+
 
 class ReadyMode(Enum):
     Ready = 1
@@ -25,6 +27,7 @@ class ReadyMode(Enum):
 class ReadyResponse:
     mode: ReadyMode
     message: str
+
 
 class Request:
     RequestId: int
@@ -40,7 +43,6 @@ class Response:
     Error: str = None
     Exception: str = None
     Timing: {}
-
 
 
 class Driver(DriverInterface):
@@ -64,11 +66,12 @@ class Driver(DriverInterface):
     equipment_type_and_id: str
     _info: dict
     _responding: TriState = None
-    _last_response: datetime.datetime = None
-    _receive_timeout = 5 # seconds
-    _ready_timeout = 30 # be patient, matlab needs to come up
+    _last_response: datetime.datetime = Never
+    _receive_timeout = 5  # seconds
+    _ready_timeout = 30  # be patient, matlab needs to come up
     _waiter_for_ready_thread: threading.Thread
     _process_monitor_thread: threading.Thread
+    _probing_monitor_thread: threading.Thread
     _terminating = False
 
     _last_answer_to_probe: datetime.datetime = None
@@ -77,14 +80,14 @@ class Driver(DriverInterface):
     lock: threading.Lock
     should_monitor_driver_process: bool = False
 
+    def __init__(self, drivers: list, equipment: Equipment, equipment_id: int = 0):
+        super().__init__(equipment, equipment_id)
 
-    def __init__(self, drivers_list: list, equipment: Equipment, equipment_id: int = 0):
-
-        drivers_list[equipment_id] = self
+        drivers[equipment_id] = self
 
         self.equipment_type = equipment
         self.equipment_type_and_id = self.equipment_type.name.lower()
-        if equipment_id in range(1,5):
+        if equipment_id in range(1, 5):
             self.equipment_id = equipment_id
             self.equipment_type_and_id += f'-{self.equipment_id}'
             
@@ -121,7 +124,8 @@ class Driver(DriverInterface):
         self.probing_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.probing_socket.bind(self.probing_socket_path)
 
-        self.cmd=f"FROM_PYTHON_LIPP=1 exec last-matlab -nodisplay -nosplash -batch \"obs.api.Lipp('EquipmentName', '{equipment.name.lower()}'"
+        self.cmd = (f"FROM_PYTHON_LIPP=1 exec last-matlab -nodisplay -nosplash -batch \"obs.api.Lipp('EquipmentName'," +
+                    f"'{equipment.name.lower()}'")
         if equipment_id != 0:
             self.cmd += f", 'EquipmentId', {equipment_id}"
         self.cmd += ').loop();"'
@@ -135,17 +139,31 @@ class Driver(DriverInterface):
         self.should_monitor_driver_process = True
 
         self._responding = False
-        self._last_response = None
+        self._last_response = Never
         
-        self._waiter_for_ready_thread = threading.Thread(name=f"{self.equipment_type_and_id + '-wait-for-ready-thread'}",           target=self.wait_for_ready).start()
-        self._process_monitor_thread  = threading.Thread(name=f"{self.equipment_type_and_id + '-monitor-driver-process-thread'}",   target=self.monitor_driver_process).start()
-        self._probing_monitor_thread  = threading.Thread(name=f"{self.equipment_type_and_id + '-monitor-device-probing-thread'}",   target=self.monitor_device_probing).start()
+        self._waiter_for_ready_thread = threading.Thread(
+            name=f"{self.equipment_type_and_id + '-wait-for-ready-thread'}",
+            target=self.wait_for_ready)
+        self._waiter_for_ready_thread.start()
+
+        self._process_monitor_thread = threading.Thread(
+            name=f"{self.equipment_type_and_id + '-monitor-driver-process-thread'}",
+            target=self.monitor_driver_process)
+        self._process_monitor_thread.start()
+
+        self._probing_monitor_thread = threading.Thread(
+            name=f"{self.equipment_type_and_id + '-monitor-device-probing-thread'}",
+            target=self.monitor_device_probing)
+        self._probing_monitor_thread.start()
 
     def end_driver_process(self, reason: str):
-        self.logger.info(f">>> Ending driver process, reason='{reason}'")
         self._terminating = True  # tells threads to die
         if self.driver_process is not None:
+            self.logger.info(f">>> Sending SIGTERM to driver process (pid={self.driver_process.pid}), reason='{reason}'")
             self.driver_process.terminate()
+            time.sleep(3)
+            self.logger.info(f">>> Sending SIGKILL to driver process (pid={self.driver_process.pid}), reason='{reason}'")
+            self.driver_process.kill()
         self.driver_process = None
         self.should_monitor_driver_process = False
 
@@ -171,8 +189,7 @@ class Driver(DriverInterface):
 
     def monitor_device_probing(self):
         while not self._terminating:
-            self.receive_probing() # blocking
-
+            self.receive_probing()  # blocking
 
     def wait_for_ready(self):
         """
@@ -183,15 +200,15 @@ class Driver(DriverInterface):
         """
         self.logger.info("started")
         while not self._terminating:
-            ready_packet = self.receive_from_driver() # on timeout returns a None ready_packet
+            incoming_packet = self.receive_from_driver()  # on timeout returns a None incoming_packet
 
-            if ready_packet is not None:
+            if incoming_packet is not None:
                 self._responding = True
-                self.socket.settimeout(self._receive_timeout) # from now on responses should come faster
-                if ready_packet['Value'] == "not-detected":
+                self.socket.settimeout(self._receive_timeout)  # from now on responses should come faster
+                if incoming_packet['Value'] == "not-detected":
                     self.logger.info("not-detected")
                     self._detected = False
-                elif ready_packet['Value'] == "detected":
+                elif incoming_packet['Value'] == "detected":
                     self.logger.info("detected")
                     self._detected = True
                 return
@@ -221,8 +238,8 @@ class Driver(DriverInterface):
 
         if not self.detected:
             return JSONResponse({
-            'Error': f"Device '{self.equipment_type_and_id}' not-detected",
-        })
+                'Error': f"Device '{self.equipment_type_and_id}' not-detected",
+            })
         
         request = Request()
         self.current_request_id += 1
@@ -234,7 +251,8 @@ class Driver(DriverInterface):
         request.RequestTime = datetime.datetime.now()
         data = json.dumps(request.__dict__, cls=DateTimeEncoder).encode()
         self.pending_request = request
-        
+
+        response = None
         acquired = self.lock.acquire(timeout=10)
         if acquired:
             try:
@@ -243,19 +261,18 @@ class Driver(DriverInterface):
                 self._responding = False
                 self.lock.release()
                 return JSONResponse({
-                'Error': f"LIPP connection to '{self.peer_socket_path[1:]}' refused",
-            })
+                    'Error': f"LIPP connection to '{self.peer_socket_path[1:]}' refused",
+                })
 
             response = self.receive_from_driver()
             self.lock.release()
         else:
             # did not acquire the lock within 10 seconds, kill the Lipper!
-            # self.restart_driver_process(reason=f"did not acquire lock within {10} seconds, pending request={self.pending_request.__dict__}")
+            # self.restart_driver_process(reason=f"did not acquire lock within {10} seconds, " +
+            #                                    f"pending request={self.pending_request.__dict__}")
             pass
 
-        # return JSONResponse(response['Value']) if response and 'Value' in response else None
         return JSONResponse(response['Value'] if response and 'Value' in response else None)
-    
 
     def receive_probing(self):
         try:
@@ -266,21 +283,20 @@ class Driver(DriverInterface):
         
         self.logger.info(f"got '{data}' from '{address}")
         response = json.loads(data.decode(), object_hook=datetime_decoder)
-        if not 'AnswersToProbe' in response:
+        if 'AnswersToProbe' not in response:
             self.logger.error(f"Missing 'AnswersToProbe' field in received '{data}'")
             return
         self._answers_to_probe = response['AnswersToProbe']
         self._last_answer_to_probe = datetime.datetime.now()
-        
-
 
     def receive_from_driver(self):
         try:
             data, address = self.socket.recvfrom(self._max_bytes)
             self._responding = True
             self._last_response = datetime.datetime.now()
-        except socket.timeout as ex:
-            # self.logger.error(f"Timeout ({self.socket.gettimeout()} sec.) while recvfrom on '{self.peer_socket_path[1:]}'")
+        except socket.timeout:
+            # self.logger.error(f"Timeout ({self.socket.gettimeout()} sec.) " +
+            #                   f"while recvfrom on '{self.peer_socket_path[1:]}'")
             self._responding = False
             return None
 
@@ -298,10 +314,10 @@ class Driver(DriverInterface):
             self.logger.error(f"remote       Cause: {ex['cause']}")
             self.logger.error(f"remote  Correction: {ex['Correction']}")
             self.logger.error(f"remote       Stack:")
-            if type(ex['stack']) == list:
+            if isinstance(ex['stack'], list):
                 for st in ex['stack']:
                     self.logger.error(f"remote [{st['file']}:{st['line']}] {st['name']}")
-            elif type(ex['stack']) == dict:
+            elif isinstance(ex['stack'], dict):
                 self.logger.error(f"remote [{ex['stack']['file']}:{ex['stack']['line']}] {ex['stack']['name']}")
         elif 'RequestId' not in response or response['RequestId'] is None:
             raise Exception("Missing 'RequestId' in response")
@@ -316,8 +332,8 @@ class Driver(DriverInterface):
             rx_duration: datetime.timedelta = (rx['Received'] - rx['Sent'])
             elapsed = rx['Received'] - tx['Sent']
             self.logger.info(f", Timing: elapsed: {humanize.precisedelta(elapsed, minimum_unit='microseconds')}, " +
-                    f"request: {humanize.precisedelta(tx_duration, minimum_unit='microseconds')}, " + 
-                    f"response: {humanize.precisedelta(rx_duration, minimum_unit='microseconds')}")
+                             f"request: {humanize.precisedelta(tx_duration, minimum_unit='microseconds')}, " +
+                             f"response: {humanize.precisedelta(rx_duration, minimum_unit='microseconds')}")
 
         return response
 
@@ -328,7 +344,7 @@ class Driver(DriverInterface):
         return self._reason
     
     async def quit(self):
-        if self._detected:
+        if self._detected and self.driver_process is not None:
             self.logger.info(f"quit: Sending method='quit' to pid={self.driver_process.pid}")
             await self.get(method='quit')
         self.end_driver_process(reason='quit')
@@ -357,9 +373,11 @@ class Driver(DriverInterface):
     @property
     def last_response(self):
         return self._last_response
-    
+
+
 if __name__ == '__main__':
-    driver = Driver(equipment=Equipment.Test, equipment_id=3)
+    drivers_list: List[Driver] = list()
+    driver = Driver(drivers=drivers_list, equipment=Equipment.Test, equipment_id=3)
 
     ready_packet = driver.receive_from_driver()
     driver.logger.info(f"received ready packet with mode={ready_packet.mode}")
