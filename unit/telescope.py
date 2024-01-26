@@ -6,6 +6,7 @@ parent_dir = str(Path(__file__).resolve().parent.parent)
 sys.path.append(parent_dir)
 from activities import Activities
 
+
 class Telescope(Activities):
     focuser = None
     camera = None
