@@ -281,7 +281,7 @@ class Driver(DriverInterface):
             self.logger.exception(f"While recvfrom probing_socket", exc_info=ex)
             return
         
-        self.logger.info(f"got '{data}' from '{address}")
+        self.logger.info(f"got '{data}' from '{address}'")
         response = json.loads(data.decode(), object_hook=datetime_decoder)
         if 'AnswersToProbe' not in response:
             self.logger.error(f"Missing 'AnswersToProbe' field in received '{data}'")
