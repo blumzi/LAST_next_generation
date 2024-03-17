@@ -300,7 +300,7 @@ class Driver(DriverInterface):
             self._responding = False
             return None
 
-        self.logger.info(f"got '{data}' from '{address}")
+        self.logger.info(f"got '{data}' from '{address}'")
         response = json.loads(data.decode(), object_hook=datetime_decoder)
 
         if 'Error' in response and response['Error'] is not None:
