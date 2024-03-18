@@ -7,9 +7,9 @@ trap kill_unit_server SIGINT SIGHUP
 function kill_unit_server() {
     wget -O /dev/null -o /dev/null http://127.0.0.1:8000/shutdown &
     sleep 2
-    pkill -f 'python3 unit/unit-server.py'
     pkill -f 'obs.api.ApiBase.makeAuxiliaryFiles'
     pkill -f 'obs.api.Lipp.*\.loop'
+    pkill -f 'python3.*unit/unit-server.py'
 }
 
 function usage() {
