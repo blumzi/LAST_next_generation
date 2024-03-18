@@ -272,7 +272,8 @@ class Driver(DriverInterface):
             #                                    f"pending request={self.pending_request.__dict__}")
             pass
 
-        return JSONResponse(response['Value'] if response and 'Value' in response else None)
+        return JSONResponse(response)
+        # return JSONResponse(response['Value'] if response and 'Value' in response else None)
 
     def receive_probing(self):
         try:
