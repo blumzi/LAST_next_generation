@@ -4,23 +4,23 @@ import logging
 from utils import Equipment, init_log, LAST_API_ROOT, TriState
 from urllib.parse import urlencode
 from driver_interface import DriverInterface
-from fastapi.responses import JSONResponse
 import datetime
 import json
 
+
 class Forwarder(DriverInterface):
     remote_address: str = None
-    port: str = "8000"
+    port: int = 8000
     base_url: str
     equipment: Equipment
     equip: str
     equip_id: int
     _reason: str = None
     _info: dict
-    _responding: TriState = None;
-    _last_response: datetime.datetime = None
+    _responding: TriState = None
 
-    def __init__(self, address: str, port: int = -1, equipment: Equipment = Equipment.Undefined, equip_id: int = 0) -> None:
+    def __init__(self, address: str, port: int = -1, equipment: Equipment = Equipment.Undefined, equip_id: int = 0):
+        DriverInterface.__init__(self, equipment_type=equipment, equipment_id=equip_id)
         if address:
             self.remote_address = address
         else:
@@ -55,12 +55,11 @@ class Forwarder(DriverInterface):
         }
 
         self._responding = False
-        self._last_response = None
+        self._last_response = datetime.datetime.min
 
         self.logger = logging.getLogger(f"forwarder-{equip_name}-{self.equip_id}")
         init_log(self.logger)
         self.logger.info(f"Started forwarding to {self.base_url}")
-        
 
     async def get(self, method: str, **kwargs) -> dict:
         url = self.base_url + '/' + method
@@ -68,33 +67,32 @@ class Forwarder(DriverInterface):
             url += "?" + urlencode(kwargs)
         self.logger.info(f"forwarding get(url='{url}')")
         
-        async with httpx.AsyncClient(trust_env=False) as client: #  must have trust_env=False, otherwise it uses the proxy
+        async with httpx.AsyncClient(trust_env=False) as client:  # must have trust_env=False, to ignore proxy
             timeout = 5
             try:
                 response = await client.get(url, timeout=timeout, follow_redirects=False)
                 response.raise_for_status()
                 self._responding = True
                 self._last_response = datetime.datetime.now()
-                self._detected = True # there was no exception -> we are detected
-            except httpx.HTTPStatusError as ex:
+                self._detected = True  # there was no exception -> we are detected
+            except Exception as ex:
                 self._detected = False
                 self._responding = False
                 self.logger.error(f"HTTP error ({ex.args[0]})")
-                return JSONResponse({
+                return {
                     'Error': ex.args[0]
-                })
+                }
             
             if response.is_success:
                 data = json.loads(response.content)
-                return JSONResponse(content=data)
-    
+                return data
 
     async def put(self, method: str, **kwargs) -> dict:
         url = self.base_url + '/' + method
         if kwargs != {}:
             url += "?" + urlencode(kwargs)
         self.logger.info(f"forwarding get(url='{url}')")
-        async with httpx.AsyncClient(trust_env=False) as client: #  must have trust_env=False, otherwise it uses the proxy
+        async with httpx.AsyncClient(trust_env=False) as client:  # must have trust_env=False, to ignore proxy
             timeout = 5
             try:
                 response = await client.put(url, timeout=timeout, follow_redirects=False)
@@ -103,15 +101,12 @@ class Forwarder(DriverInterface):
             except Exception as ex:
                 self._detected = False
                 self.logger.error(f"HTTP error ({ex.args[0]})")
-                return JSONResponse({
-                    'Error': ex.args[0]
-                })
+                return {'Error': ex.args[0]}
             
             if response.is_success:
                 data = json.loads(response.content)
-                return JSONResponse(content=data)
-            
-            
+                return data
+
     def info(self):
         return self._info
     
