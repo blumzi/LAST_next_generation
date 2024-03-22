@@ -124,7 +124,7 @@ class Driver(DriverInterface):
         self.probing_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.probing_socket.bind(self.probing_socket_path)
 
-        self.cmd = (f"FROM_PYTHON_LIPP=1 exec last-matlab -nodisplay -nosplash -batch \"obs.api.Lipp('EquipmentName'," +
+        self.cmd = (f"FROM_PYTHON_LIPP=1 exec last-matlab -batch \"obs.api.Lipp('EquipmentName'," +
                     f"'{equipment.name.lower()}'")
         if equipment_id != 0:
             self.cmd += f", 'EquipmentId', {equipment_id}"
@@ -158,12 +158,13 @@ class Driver(DriverInterface):
 
     def end_driver_process(self, reason: str):
         self._terminating = True  # tells threads to die
-        if self.driver_process is not None:
-            self.logger.info(f">>> Sending SIGTERM to driver process (pid={self.driver_process.pid}), reason='{reason}'")
+        if self.driver_process and self.driver_process.poll() is None:
+            self.logger.info(f">>> Terminating driver process (pid={self.driver_process.pid}), reason='{reason}'")
             self.driver_process.terminate()
             time.sleep(3)
-            self.logger.info(f">>> Sending SIGKILL to driver process (pid={self.driver_process.pid}), reason='{reason}'")
-            self.driver_process.kill()
+            if self.driver_process.poll() is None:
+                self.logger.info(f">>> Killing driver process (pid={self.driver_process.pid}), reason='{reason}'")
+                self.driver_process.kill()
         self.driver_process = None
         self.should_monitor_driver_process = False
 
@@ -214,7 +215,7 @@ class Driver(DriverInterface):
                 return
 
         if self._terminating:
-            if self.driver_process and self.driver_process.poll() is not None:  # still alive
+            if self.driver_process and self.driver_process.poll() is None:  # still alive
                 try:
                     self.logger.info(f"process pid={self.driver_process.pid} is still alive, killing it!")
                     os.killpg(self.driver_process.pid, signal.SIGKILL)
@@ -273,7 +274,6 @@ class Driver(DriverInterface):
             pass
 
         return JSONResponse(response)
-        # return JSONResponse(response['Value'] if response and 'Value' in response else None)
 
     def receive_probing(self):
         try:
