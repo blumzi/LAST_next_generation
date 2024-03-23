@@ -1,3 +1,7 @@
+import datetime
+import os
+import signal
+
 import uvicorn
 from fastapi import FastAPI
 from utils import init_log  # , PrettyJSONResponse, HelpResponse, quote, Subsystem
@@ -25,7 +29,7 @@ init_log(logger)
 #  modules
 #
 
-cmd = "last-matlab -nodisplay -nosplash -batch 'obs.api.ApiBase.makeAuxiliaryFiles; exit'"
+cmd = "last-matlab -batch 'obs.api.ApiBase.makeAuxiliaryFiles; exit(0)'"
 logger.info(f'calling MATLAB FastApi routers maker with cmd="{cmd}"')
 routers_maker = Popen(args=cmd, shell=True)
 logger.info(f'Waiting for MATLAB FastApi routers maker')
@@ -70,8 +74,8 @@ async def shutdown():
     logger.info(f"shutdown by shutdown query")
     await unit_quit()
     uvicorn_server.should_exit = True
-    # await uvicorn_server.shutdown()
-    # raise KeyboardInterrupt
+    logger.info('Committing suicide :-)')
+    os.kill(os.getpid(), signal.SIGTERM)
     return {"message": "Server is shutting down"}
 
 uvicorn_server = None
