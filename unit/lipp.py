@@ -16,6 +16,8 @@ import asyncio
 import os
 import signal
 from typing import List
+from forwarder import Forwarder
+from utils import default_port
 
 
 class ReadyMode(Enum):
@@ -44,6 +46,8 @@ class Response:
     Exception: str = None
     Timing: {}
 
+logger: logging.Logger = logging.getLogger('lipp')
+init_log(logger)
 
 class Driver(DriverInterface):
     """
@@ -67,8 +71,9 @@ class Driver(DriverInterface):
     _info: dict
     _responding: TriState = None
     _last_response: datetime.datetime = Never
-    _receive_timeout = 5  # seconds
-    _ready_timeout = 30  # be patient, matlab needs to come up
+    _receive_timeout = 5    # seconds
+    _ready_timeout = 30     # be patient, matlab needs to come up
+    _probe_timeout = 120    # regular probes should arrive every 30 seconds
     _waiter_for_ready_thread: threading.Thread
     _process_monitor_thread: threading.Thread
     _probing_monitor_thread: threading.Thread
@@ -78,12 +83,14 @@ class Driver(DriverInterface):
     _answers_to_probe: TriState = None
 
     lock: threading.Lock
-    should_monitor_driver_process: bool = False
+    driver_process_should_be_restarted: bool = False
 
     def __init__(self, drivers: list, equipment: Equipment, equipment_id: int = 0):
         super().__init__(equipment, equipment_id)
 
-        drivers[equipment_id] = self
+        self.drivers = drivers
+        self.equipment_id = equipment_id
+        self.drivers[equipment_id] = self
 
         self.equipment_type = equipment
         self.equipment_type_and_id = self.equipment_type.name.lower()
@@ -122,6 +129,7 @@ class Driver(DriverInterface):
         # A socket to receive the results of periodical device probes
         self.probing_socket_path = self.local_socket_path + '-probing'
         self.probing_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        self.probing_socket.settimeout(self._probe_timeout)
         self.probing_socket.bind(self.probing_socket_path)
 
         matlab_sentence = "obs.api.Lipp('EquipmentName', " + f"'{equipment.name.lower()}'"
@@ -139,8 +147,7 @@ class Driver(DriverInterface):
         env['LANG'] = 'en_US'
         self.logger.info(f">>> Starting driver process, {reason=}, {self.cmd=}, {env=}")
         self.driver_process = Popen(args=self.cmd, env=env)
-        # self.driver_process = Popen(args=self.cmd, env=env, preexec_fn=os.setpgrp)
-        self.should_monitor_driver_process = True
+        self.driver_process_should_be_restarted = True
 
         self._responding = False
         self._last_response = Never
@@ -162,16 +169,12 @@ class Driver(DriverInterface):
 
     def end_driver_process(self, reason: str):
         self._terminating = True  # tells threads to die
+        self.driver_process_should_be_restarted = False
         if self.driver_process and self.driver_process.poll() is None:
             self.logger.info(f">>> Terminating driver process (pid={self.driver_process.pid}), reason='{reason}'")
             self.driver_process.terminate()
-            time.sleep(3)
-            if self.driver_process.poll() is None:
-                self.logger.info(f">>> Killing driver process (pid={self.driver_process.pid}), reason='{reason}'")
-                self.driver_process.kill()
-        self.driver_process.wait()
+            self.driver_process.wait()
         self.driver_process = None
-        self.should_monitor_driver_process = False
 
     def restart_driver_process(self, reason: str):
         self.logger.info(f">>> Restarting driver process, reason='{reason}'")
@@ -183,15 +186,11 @@ class Driver(DriverInterface):
         Monitors the LIPP (MATLAB) process for this driver
         - Idea: maybe it will restart dead processes using self.cmd (frequent restart handling ?!?)
         """
-        while not self._terminating:
-            if self.should_monitor_driver_process and self.driver_process is not None:  # still alive
-                if self.driver_process.poll() is None:
-                    self._info['ProcessId'] = self.driver_process.pid
-                else:
-                    self._info['ProcessId'] = None
-            else:
-                self._info['ProcessId'] = None
-            time.sleep(5)
+        rc = self.driver_process.wait()
+        if self.driver_process_should_be_restarted:  # if it died somehow, not because we ended it
+            reason = f"Process exited with {rc=}"
+            self.logger.info(f">>> Starting driver process {reason=}")
+            self.start_driver_process(reason=reason)
 
     def monitor_device_probing(self):
         while not self._terminating:
@@ -214,6 +213,8 @@ class Driver(DriverInterface):
                 if incoming_packet['Value'] == "not-detected":
                     self.logger.info("not-detected")
                     self._detected = False
+                    if self.equipment_type == Equipment.Mount:
+                        self.__del__()  # It will morph self into a Forwarder()
                 elif incoming_packet['Value'] == "detected":
                     self.logger.info("detected")
                     self._detected = True
@@ -229,8 +230,9 @@ class Driver(DriverInterface):
                     pass
                 except Exception as ex:
                     self.logger.exception(f"Could not killpg pid={self.driver_process.pid}", ex)
-
-        self.logger.info("done")
+                    self.logger.info("terminated")
+        else:
+            self.logger.info("done")
 
     async def get(self, method: str, **kwargs) -> object:
         await asyncio.sleep(0)
@@ -281,19 +283,29 @@ class Driver(DriverInterface):
         return JSONResponse(response)
 
     def receive_probing(self):
+        data = ''
+        address = ''
+
         try:
             data, address = self.probing_socket.recvfrom(self._max_bytes)
+        except socket.timeout:
+            if self._terminating:
+                return
+            if self._detected:
+                self.logger.error(f"Detected and no probe() within {self.probing_socket.gettimeout()} sec.  Suiciding!")
+                self.__del__()
         except Exception as ex:
             self.logger.exception(f"While recvfrom probing_socket", exc_info=ex)
             return
         
         self.logger.info(f"got '{data}'" + (f" from '{address}'" if address is not None else ""))
-        response = json.loads(data.decode(), object_hook=datetime_decoder)
-        if 'AnswersToProbe' not in response:
-            self.logger.error(f"Missing 'AnswersToProbe' field in received '{data}'")
-            return
-        self._answers_to_probe = response['AnswersToProbe']
-        self._last_answer_to_probe = datetime.datetime.now()
+        if data != '':
+            response = json.loads(data.decode(), object_hook=datetime_decoder)
+            if 'AnswersToProbe' not in response:
+                self.logger.error(f"Missing 'AnswersToProbe' field in received '{data}'")
+                return
+            self._answers_to_probe = response['AnswersToProbe']
+            self._last_answer_to_probe = datetime.datetime.now()
 
     def receive_from_driver(self):
         try:
@@ -344,9 +356,18 @@ class Driver(DriverInterface):
         return response
 
     def __del__(self):
+        self._terminating = True    # signal threads to die
         self.end_driver_process(reason='destructor')
         if self.socket:
             self.socket.close()
+        if self.probing_socket:
+            self.probing_socket.close()
+
+        if self.equipment_type == Equipment.Mount and not self._detected:
+            morph_to_forwarder(self.drivers, self.equipment_type, self.equipment_id)
+        else:
+            resurrect(self.drivers, self.equipment_type, self.equipment_id)
+
         return self._reason
     
     async def quit(self):
@@ -379,6 +400,28 @@ class Driver(DriverInterface):
     @property
     def last_response(self):
         return self._last_response
+
+
+def resurrect(drivers: List[Driver], equipment: Equipment, equipment_id: int = 0):
+    logger.info(f">>> Resurrecting LIPP driver {equipment.name}[{equipment_id}] ...")
+    drivers[equipment_id] = Driver(drivers=drivers, equipment=equipment, equipment_id=equipment_id)
+
+
+def morph_to_forwarder(drivers: List[Driver], equipment: Equipment, equipment_id: int = 0):
+    hostname = socket.gethostname()
+    if hostname.startswith('last'):
+        this_side = hostname[-1]
+    else:
+        raise(Exception(f"Bad {hostname=}, it does not start with 'last'"))
+
+    if this_side == 'w':
+        peer_side = 'e'
+    else:
+        peer_side = 'w'
+    peer_hostname = hostname[:-1] + peer_side
+
+    logger.info(f">>> Morphing LIPP driver to Forwarder(address={peer_hostname}, port={default_port}, equipment={equipment}, equip_id={equipment_id}) ...")
+    drivers[equipment_id] = Forwarder(address=peer_hostname, port=default_port, equipment=equipment, equip_id=equipment_id)
 
 
 if __name__ == '__main__':
