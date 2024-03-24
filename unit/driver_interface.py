@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from utils import Equipment
 from datetime import datetime
 
+
 class DriverInterface(ABC):
 
     _detected: bool = False
