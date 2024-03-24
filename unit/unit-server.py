@@ -10,11 +10,6 @@ from socket import gethostname
 import logging
 from subprocess import Popen
 
-import sys
-from pathlib import Path
-
-sys.path.append(str(Path(__file__).parent.parent))
-
 from unit import unit_quit, unit_router
 from server.routers import focuser, camera, mount, pswitch
 
@@ -29,9 +24,12 @@ init_log(logger)
 #  modules
 #
 
-cmd = "last-matlab -batch 'obs.api.ApiBase.makeAuxiliaryFiles; exit(0)'"
-logger.info(f'calling MATLAB FastApi routers maker with cmd="{cmd}"')
-routers_maker = Popen(args=cmd, shell=True)
+
+cmd = ['/usr/local/bin/matlab', '-batch', 'obs.api.ApiBase.makeAuxiliaryFiles']
+env = os.environ.copy()
+env['LANG'] = 'en_US'
+logger.info(f'calling MATLAB FastApi routers maker with "{cmd=}"')
+routers_maker = Popen(args=cmd, env=env)
 logger.info(f'Waiting for MATLAB FastApi routers maker')
 routers_maker.wait()
 if routers_maker.returncode == 0:
@@ -60,9 +58,17 @@ app = FastAPI(
     openapi_url='/openapi.json')
 
 app.include_router(pswitch.router)
+
+focuser.make_focusers()
 app.include_router(focuser.router)
+
+camera.make_cameras()
 app.include_router(camera.router)
+
+mount.make_mounts()
 app.include_router(mount.router)
+
+# TBD: unit_make_units() ...
 app.include_router(unit_router)
 
 

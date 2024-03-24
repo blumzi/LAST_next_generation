@@ -124,18 +124,22 @@ class Driver(DriverInterface):
         self.probing_socket = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
         self.probing_socket.bind(self.probing_socket_path)
 
-        self.cmd = (f"FROM_PYTHON_LIPP=1 exec last-matlab -batch \"obs.api.Lipp('EquipmentName'," +
-                    f"'{equipment.name.lower()}'")
+        matlab_sentence = "obs.api.Lipp('EquipmentName', " + f"'{equipment.name.lower()}'"
         if equipment_id != 0:
-            self.cmd += f", 'EquipmentId', {equipment_id}"
-        self.cmd += ').loop();"'
+            matlab_sentence += f", 'EquipmentId', {equipment_id}"
+        matlab_sentence += ').loop()'
+        self.cmd = ['/usr/local/bin/matlab', '-batch', matlab_sentence]
         self.start_driver_process(reason='first-time')
 
         self.lock = threading.Lock()
 
     def start_driver_process(self, reason: str):
-        self.logger.info(f">>> Starting driver process, reason='{reason}', cmd='{self.cmd}'")
-        self.driver_process = Popen(args=self.cmd, shell=True, preexec_fn=os.setpgrp)
+        env = os.environ.copy()
+        env['FROM_PYTHON_LIPP'] = '1'
+        env['LANG'] = 'en_US'
+        self.logger.info(f">>> Starting driver process, {reason=}, {self.cmd=}, {env=}")
+        self.driver_process = Popen(args=self.cmd, env=env)
+        # self.driver_process = Popen(args=self.cmd, env=env, preexec_fn=os.setpgrp)
         self.should_monitor_driver_process = True
 
         self._responding = False
@@ -165,6 +169,7 @@ class Driver(DriverInterface):
             if self.driver_process.poll() is None:
                 self.logger.info(f">>> Killing driver process (pid={self.driver_process.pid}), reason='{reason}'")
                 self.driver_process.kill()
+        self.driver_process.wait()
         self.driver_process = None
         self.should_monitor_driver_process = False
 
