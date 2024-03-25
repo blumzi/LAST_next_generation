@@ -145,7 +145,7 @@ class Driver(DriverInterface):
         env = os.environ.copy()
         env['FROM_PYTHON_LIPP'] = '1'
         env['LANG'] = 'en_US'
-        self.logger.info(f">>> Starting driver process, {reason=}, {self.cmd=}, {env=}")
+        self.logger.info(f">>> Starting driver process, {reason=}, {self.cmd=}")
         self.driver_process = Popen(args=self.cmd, env=env)
         self.driver_process_should_be_restarted = True
 
@@ -297,9 +297,11 @@ class Driver(DriverInterface):
         except Exception as ex:
             self.logger.exception(f"While recvfrom probing_socket", exc_info=ex)
             return
-        
-        self.logger.info(f"got '{data}'" + (f" from '{address}'" if address is not None else ""))
-        if data != '':
+
+        if data == '':
+            pass    # TBD
+        else:
+            self.logger.info(f"got '{data}'" + (f" from '{address}'" if address and address != '' else ""))
             response = json.loads(data.decode(), object_hook=datetime_decoder)
             if 'AnswersToProbe' not in response:
                 self.logger.error(f"Missing 'AnswersToProbe' field in received '{data}'")
