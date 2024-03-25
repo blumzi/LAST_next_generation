@@ -6,6 +6,7 @@ from urllib.parse import urlencode
 from driver_interface import DriverInterface
 import datetime
 import json
+from fastapi.responses import JSONResponse
 
 
 class Forwarder(DriverInterface):
@@ -61,51 +62,39 @@ class Forwarder(DriverInterface):
         init_log(self.logger)
         self.logger.info(f"Started forwarding to {self.base_url}")
 
-    async def get(self, method: str, **kwargs) -> dict:
-        url = self.base_url + '/' + method
-        if kwargs != {}:
-            url += "?" + urlencode(kwargs)
-        self.logger.info(f"forwarding get(url='{url}')")
-        
-        async with httpx.AsyncClient(trust_env=False) as client:  # must have trust_env=False, to ignore proxy
-            timeout = 5
-            try:
-                response = await client.get(url, timeout=timeout, follow_redirects=False)
-                response.raise_for_status()
-                self._responding = True
-                self._last_response = datetime.datetime.now()
-                self._detected = True  # there was no exception -> we are detected
-            except Exception as ex:
-                self._detected = False
-                self._responding = False
-                self.logger.error(f"HTTP error ({ex.args[0]})")
-                return {
-                    'Error': ex.args[0]
-                }
-            
-            if response.is_success:
-                data = json.loads(response.content)
-                return data
+    async def get(self, method: str, **kwargs) -> object:
+        response = await self.get_or_put('GET', method=method, **kwargs)
+        return response
 
-    async def put(self, method: str, **kwargs) -> dict:
+    async def put(self, method: str, **kwargs) -> object:
+        response = await self.get_or_put('PUT', method=method, **kwargs)
+        return response
+
+    async def get_or_put(self, request_type: str, method: str, **kwargs) -> object:
+
+        if request_type != "GET" and request_type != "PUT":
+            raise(Exception(f"Bad '{request_type=}', expected either 'GET' or 'PUT'"))
+
         url = self.base_url + '/' + method
         if kwargs != {}:
             url += "?" + urlencode(kwargs)
-        self.logger.info(f"forwarding get(url='{url}')")
+        self.logger.info(f"forwarding {request_type}(url='{url}')")
         async with httpx.AsyncClient(trust_env=False) as client:  # must have trust_env=False, to ignore proxy
             timeout = 5
             try:
-                response = await client.put(url, timeout=timeout, follow_redirects=False)
+                if request_type == 'GET':
+                    response = await client.get(url, timeout=timeout, follow_redirects=False)
+                else:
+                    response = await client.put(url, timeout=timeout, follow_redirects=False)
                 response.raise_for_status()
                 self._detected = True
             except Exception as ex:
                 self._detected = False
                 self.logger.error(f"HTTP error ({ex.args[0]})")
-                return {'Error': ex.args[0]}
-            
+                return JSONResponse({'Error': ex.args[0]})
+
             if response.is_success:
-                data = json.loads(response.content)
-                return data
+                return json.loads(response.content)
 
     def info(self):
         return self._info
