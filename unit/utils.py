@@ -260,3 +260,18 @@ def jsonResponse(obj: object) -> str:
 #             self._value = self._getter()
 #             self._last_get = datetime.datetime.now()
 #         return self._value
+
+
+def log_matlab_exception(logger: logging.Logger, exception_dict: dict):
+    logger.error(f"Remote MATLAB Exception")
+    logger.error(f" identifier: '{exception_dict['identifier']}'")
+    logger.error(f"    message: '{exception_dict['message']}'")
+    if 'cause' in exception_dict:
+        logger.error(f"      cause: '{exception_dict['cause']}'")
+    logger.error(f"      stack:")
+    for item in exception_dict['stack']:
+        name = item['name']
+        file = item['file']
+        line = item['line']
+        logger.error(f"  [{file}:{line}] {name}")
+
