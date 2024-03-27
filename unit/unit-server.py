@@ -10,8 +10,6 @@ from socket import gethostname
 import logging
 from subprocess import Popen
 
-from unit import unit_quit, unit_router
-from server.routers import focuser, camera, mount, pswitch
 
 logger = logging.getLogger('last-unit-server')
 init_log(logger)
@@ -37,6 +35,9 @@ if routers_maker.returncode == 0:
 else:
     logger.error(f'FastApi routers maker died with rc={routers_maker.returncode}')
     exit(routers_maker.returncode)
+
+from unit import unit_quit, unit_router
+from server.routers import focuser, camera, mount, pswitch
 
 
 async def end_lifespan():
