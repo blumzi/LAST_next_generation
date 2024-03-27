@@ -1,7 +1,7 @@
 import httpx
 import socket
 import logging
-from utils import Equipment, init_log, LAST_API_ROOT, TriState
+from utils import Equipment, init_log, LAST_API_ROOT, TriState, log_matlab_exception
 from urllib.parse import urlencode
 from driver_interface import DriverInterface
 import datetime
@@ -94,7 +94,16 @@ class Forwarder(DriverInterface):
                 return JSONResponse({'Error': ex.args[0]})
 
             if response.is_success:
-                return json.loads(response.content)
+                remote_response = json.loads(response.content)
+                if 'Exception' in remote_response:
+                    log_matlab_exception(self.logger, remote_response['Exception'])
+                    return JSONResponse(remote_response)
+                elif 'Error' in remote_response:
+                    self.logger.error(remote_response['Error'])
+                    return JSONResponse(remote_response)
+                elif 'Value' in remote_response:
+                    return JSONResponse(remote_response)
+                return response.content
 
     def info(self):
         return self._info
