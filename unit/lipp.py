@@ -210,14 +210,17 @@ class Driver(DriverInterface):
             if incoming_packet is not None:
                 self._responding = True
                 self.socket.settimeout(self._receive_timeout)  # from now on responses should come faster
-                if incoming_packet['Value'] == "not-detected":
-                    self.logger.info("not-detected")
-                    self._detected = False
-                    if self.equipment_type == Equipment.Mount:
-                        self.__del__()  # It will morph self into a Forwarder()
-                elif incoming_packet['Value'] == "detected":
-                    self.logger.info("detected")
-                    self._detected = True
+
+                if 'Value' in incoming_packet:
+                    # it may have been an 'Error' or 'Exception' packet
+                    if incoming_packet['Value'] == "not-detected":
+                        self.logger.info("not-detected")
+                        self._detected = False
+                        if self.equipment_type == Equipment.Mount:
+                            self.__del__()  # It will morph self into a Forwarder()
+                    elif incoming_packet['Value'] == "detected":
+                        self.logger.info("detected")
+                        self._detected = True
                 return
 
         if self._terminating:
